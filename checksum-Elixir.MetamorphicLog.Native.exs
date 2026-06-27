@@ -1,0 +1,17 @@
+%{
+  "libmetamorphic_log_nif-v0.1.0-nif-2.15-aarch64-apple-darwin.so.tar.gz" => "sha256:6cb2ffa8808563fc621edb4a9d00a92497b47fdae3da664a001700c129c44a26",
+  "libmetamorphic_log_nif-v0.1.0-nif-2.15-aarch64-unknown-linux-gnu.so.tar.gz" => "sha256:6b9c606fc76eb39934951317b3df129eb1b35b2ae065d6f21259460ac82f50a3",
+  "libmetamorphic_log_nif-v0.1.0-nif-2.15-x86_64-apple-darwin.so.tar.gz" => "sha256:4308d04ffeb12e5dfc585579677114e73a2ae5a3b65e946be35914cff0120404",
+  "libmetamorphic_log_nif-v0.1.0-nif-2.15-x86_64-unknown-linux-gnu.so.tar.gz" => "sha256:f4ba4b9ee2aea9632853f0078bd5080dac60347a50d8ebeb1428e0c871250030",
+  "libmetamorphic_log_nif-v0.1.0-nif-2.16-aarch64-apple-darwin.so.tar.gz" => "sha256:893c6d6ca1ee17939052b117106bc0e1b9558ae88ad111f4137749b391953fa9",
+  "libmetamorphic_log_nif-v0.1.0-nif-2.16-aarch64-unknown-linux-gnu.so.tar.gz" => "sha256:edb77517d01405f99e24ba53af9548b42a2efb10dea9b21e3462910a34af5153",
+  "libmetamorphic_log_nif-v0.1.0-nif-2.16-x86_64-apple-darwin.so.tar.gz" => "sha256:60b550f103b7ff80f36e351952ace8b21d8bb9006e8a14ee99cf16df5b2a7f65",
+  "libmetamorphic_log_nif-v0.1.0-nif-2.16-x86_64-unknown-linux-gnu.so.tar.gz" => "sha256:210e391ad220f3801038c1739dabca6af849ee9b7b2f5514510ad1bf7575daf9",
+  "libmetamorphic_log_nif-v0.1.0-nif-2.17-aarch64-apple-darwin.so.tar.gz" => "sha256:8a00f87a7bfc769cbf929cd2ace2fe8fa47baa2a69294764b3613701b274419a",
+  "libmetamorphic_log_nif-v0.1.0-nif-2.17-aarch64-unknown-linux-gnu.so.tar.gz" => "sha256:5c78737cd05aa5f9001ab73ad28d0c94c863f31de251a15a7bc054362e37a552",
+  "libmetamorphic_log_nif-v0.1.0-nif-2.17-x86_64-apple-darwin.so.tar.gz" => "sha256:2cf625052318e3881d39ffa96db18a2836ea5859c263b4b269ea49d1279c264d",
+  "libmetamorphic_log_nif-v0.1.0-nif-2.17-x86_64-unknown-linux-gnu.so.tar.gz" => "sha256:2045ec9847990dd1a476e709fb6c8e3fe2571cd33d43dcc9795f376062019a27",
+  "metamorphic_log_nif-v0.1.0-nif-2.15-x86_64-pc-windows-msvc.dll.tar.gz" => "sha256:1bdde51d59e40810bad43dc9f56546d72da64f45a71a0ff67fbf0e9b950cd7f0",
+  "metamorphic_log_nif-v0.1.0-nif-2.16-x86_64-pc-windows-msvc.dll.tar.gz" => "sha256:cc7c83d9e6f77534175b1b5e8098529926409ddee37f6e0c0feb9a98d2c6aed9",
+  "metamorphic_log_nif-v0.1.0-nif-2.17-x86_64-pc-windows-msvc.dll.tar.gz" => "sha256:d8b22a51f29821f21d775bf7c1dbf43123d1f70d84a4cdf302ca65586150fbc8",
+}

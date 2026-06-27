@@ -1,0 +1,134 @@
+name: Build Precompiled NIFs
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+  # Build-provenance attestation of each precompiled NIF artifact (additive to
+  # the sha256 verification rustler_precompiled already does via checksum-*.exs).
+  id-token: write
+  attestations: write
+
+# Prevent two simultaneous tag pushes from racing the release.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build_release:
+    name: NIF ${{ matrix.nif }} - ${{ matrix.job.target }}
+    runs-on: ${{ matrix.job.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        nif: ["2.15", "2.16", "2.17"]
+        job:
+          - { target: aarch64-apple-darwin, os: macos-14 }
+          - { target: x86_64-apple-darwin, os: macos-14 }
+          - { target: x86_64-unknown-linux-gnu, os: ubuntu-22.04 }
+          - { target: aarch64-unknown-linux-gnu, os: ubuntu-22.04, use-cross: true }
+          - { target: x86_64-pc-windows-msvc, os: windows-2022 }
+
+    steps:
+      - name: Checkout
+        # Third-party actions are pinned to a full commit SHA (SLSA L3 /
+        # federal supply-chain requirement); version comments are kept for
+        # Dependabot. @stable on rust-toolchain intentionally tracks the
+        # current stable channel.
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.job.target }}
+
+      - name: Install cross
+        if: matrix.job.use-cross
+        uses: taiki-e/install-action@fd2f5e3d644b484055ebf4268f474c565f148f25 # v2.81.9
+        with:
+          tool: cross
+
+      - name: Build NIF (cross)
+        if: matrix.job.use-cross
+        run: |
+          cd native/metamorphic_log_nif
+          cross build --release --target=${{ matrix.job.target }}
+
+      - name: Build NIF (native)
+        if: ${{ !matrix.job.use-cross }}
+        run: |
+          cd native/metamorphic_log_nif
+          cargo build --release --target=${{ matrix.job.target }}
+
+      - name: Package (unix)
+        if: runner.os != 'Windows'
+        run: |
+          LIBNAME="libmetamorphic_log_nif"
+          TARGET="${{ matrix.job.target }}"
+          NIF_VERSION="${{ matrix.nif }}"
+
+          if [[ "$TARGET" == *"apple"* ]]; then
+            EXT="dylib"
+          else
+            EXT="so"
+          fi
+
+          SOURCE="native/metamorphic_log_nif/target/${TARGET}/release/${LIBNAME}.${EXT}"
+          ARCHIVE="${LIBNAME}-${{ github.ref_name }}-nif-${NIF_VERSION}-${TARGET}.so.tar.gz"
+
+          # RustlerPrecompiled expects the file inside the tar to match the
+          # archive name (minus .tar.gz). On macOS the compiled binary is
+          # .dylib but must be named .so for Erlang's NIF loader.
+          INNER_NAME="${LIBNAME}-${{ github.ref_name }}-nif-${NIF_VERSION}-${TARGET}.so"
+          cp "${SOURCE}" "${INNER_NAME}"
+          tar -czf "${ARCHIVE}" "${INNER_NAME}"
+          echo "ARCHIVE=${ARCHIVE}" >> "$GITHUB_ENV"
+
+      - name: Package (windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          LIBNAME="metamorphic_log_nif"
+          TARGET="${{ matrix.job.target }}"
+          NIF_VERSION="${{ matrix.nif }}"
+
+          SOURCE="native/metamorphic_log_nif/target/${TARGET}/release/${LIBNAME}.dll"
+          ARCHIVE="${LIBNAME}-${{ github.ref_name }}-nif-${NIF_VERSION}-${TARGET}.dll.tar.gz"
+
+          # RustlerPrecompiled expects the file inside the tar to match the
+          # archive name (minus .tar.gz).
+          INNER_NAME="${LIBNAME}-${{ github.ref_name }}-nif-${NIF_VERSION}-${TARGET}.dll"
+          cp "${SOURCE}" "${INNER_NAME}"
+          tar -czf "${ARCHIVE}" "${INNER_NAME}"
+          echo "ARCHIVE=${ARCHIVE}" >> "$GITHUB_ENV"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: ${{ env.ARCHIVE }}
+          path: ${{ env.ARCHIVE }}
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
+        with:
+          subject-path: ${{ env.ARCHIVE }}
+
+  release:
+    name: Create Release
+    needs: build_release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
+        with:
+          files: artifacts/*
+          generate_release_notes: true

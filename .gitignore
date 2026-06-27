@@ -1,0 +1,18 @@
+# metamorphic_log
+
+# Built artifacts
+/_build/
+/deps/
+/doc/
+
+# Crash dump
+erl_crash.dump
+
+# Generated on compile
+*.ez
+
+# Rust build artifacts
+/native/metamorphic_log_nif/target/
+
+# Precompiled NIFs are downloaded at build time
+/priv/native/

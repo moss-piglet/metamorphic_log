@@ -26,14 +26,10 @@ defmodule MetamorphicLog.MixProject do
   end
 
   defp description do
-    """
-    Elixir client for the metamorphic-log transparency-log engine: inclusion/
-    consistency proof verification, C2SP signed-note + checkpoint verification
-    (Ed25519 and additive hybrid post-quantum), CONIKS key-transparency lookup/
-    absence verification, signed namespace-policy verification, and deterministic
-    ingestion primitives. Precompiled Rust NIFs — no Rust toolchain or C compiler
-    needed.
-    """
+    "Elixir client for the metamorphic-log transparency-log engine: " <>
+      "inclusion/consistency proofs, C2SP signed-note + checkpoint verification " <>
+      "(Ed25519 + hybrid post-quantum), CONIKS lookup/absence proofs, " <>
+      "namespace-policy verification, and ingestion primitives. Precompiled Rust NIFs."
   end
 
   defp deps do
@@ -59,7 +55,6 @@ defmodule MetamorphicLog.MixProject do
       files: ~w[
         lib
         docs
-        native/metamorphic_log_nif/.cargo
         native/metamorphic_log_nif/Cargo.toml
         native/metamorphic_log_nif/Cargo.lock
         native/metamorphic_log_nif/src

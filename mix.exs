@@ -1,7 +1,7 @@
 defmodule MetamorphicLog.MixProject do
   use Mix.Project
 
-  @version "0.1.0"
+  @version "0.1.1"
   @repo_url "https://github.com/moss-piglet/metamorphic_log"
 
   def project do
@@ -29,7 +29,7 @@ defmodule MetamorphicLog.MixProject do
     "Elixir client for the metamorphic-log transparency-log engine: " <>
       "inclusion/consistency proofs, C2SP signed-note + checkpoint verification " <>
       "(Ed25519 + hybrid post-quantum), CONIKS lookup/absence proofs, " <>
-      "namespace-policy verification, and ingestion primitives. Precompiled Rust NIFs."
+      "namespace-policy verification, ingestion primitives, and anchoring. Precompiled Rust NIFs."
   end
 
   defp deps do
@@ -85,7 +85,8 @@ defmodule MetamorphicLog.MixProject do
         "Key Transparency (CONIKS)": [MetamorphicLog.Coniks, MetamorphicLog.Commitment],
         "Namespace Policy": [MetamorphicLog.Policy],
         Leaves: [MetamorphicLog.Leaf],
-        Ingestion: [MetamorphicLog.Ingest]
+        Ingestion: [MetamorphicLog.Ingest],
+        Anchoring: [MetamorphicLog.Anchor]
       ]
     ]
   end

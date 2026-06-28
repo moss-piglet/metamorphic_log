@@ -91,6 +91,40 @@ about other identities:
   MetamorphicLog.Coniks.verify_absence(namespace, vrf_public, root, identity, proof)
 ```
 
+## 7. Audit anchored checkpoints (anti-equivocation)
+
+Anchoring commits a checkpoint's signed tree head to an external,
+hard-to-equivocate medium (a chain tx, an RFC 3161 notary receipt, WORM storage,
+another log) so a split view becomes publicly detectable. Build the canonical
+attestation record binding the head to your opaque medium locator, then audit it
+from both sides — the log side (binding + append-only consistency) and the
+medium side (the published commitment matches):
+
+```elixir
+{:ok, record} =
+  MetamorphicLog.Anchor.record_canonical_bytes(
+    origin, size, root, "ethereum/mainnet", locator
+  )
+
+# Log side: the attestation binds this checkpoint, and (optionally) the newer
+# head is an append-only extension of a previously-anchored one.
+:ok = MetamorphicLog.Anchor.verify_anchored(note, [vkey], record)
+
+:ok =
+  MetamorphicLog.Anchor.verify_anchored(newer_note, [vkey], record,
+    prev_note: older_note,
+    consistency_proof: proof
+  )
+
+# Medium side: bytes your operator fetched from the medium equal the
+# recomputed, medium-independent commitment.
+{:ok, commitment} = MetamorphicLog.Anchor.anchor_commitment(record)
+:ok = MetamorphicLog.Anchor.verify_commitment(record, fetched_commitment)
+```
+
+Fetching the locator from the medium (and anchor cadence, fees, and confirmation
+depth) is the operator's job — this library is I/O-free.
+
 ## Cross-target parity
 
 Every function above computes byte-identically to the native Rust core and the

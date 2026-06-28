@@ -129,4 +129,22 @@ defmodule MetamorphicLog.Native do
 
   def nif_recompute_root(_leaf_hashes_b64), do: :erlang.nif_error(:nif_not_loaded)
   def nif_parent_hash(_tile_hashes_b64), do: :erlang.nif_error(:nif_not_loaded)
+
+  # Anchoring (Slice 8)
+  def nif_anchor_record_canonical_bytes(
+        _origin,
+        _size,
+        _root_b64,
+        _commitment_alg,
+        _medium,
+        _locator_b64
+      ),
+      do: :erlang.nif_error(:nif_not_loaded)
+
+  def nif_anchor_record_parse(_record_b64), do: :erlang.nif_error(:nif_not_loaded)
+  def nif_anchor_commitment(_record_b64), do: :erlang.nif_error(:nif_not_loaded)
+  def nif_anchor_record_rfc6962_leaf_hash(_record_b64), do: :erlang.nif_error(:nif_not_loaded)
+
+  def nif_verify_anchored(_note_text, _vkeys, _record_b64, _prev_note, _consistency_proof_b64),
+    do: :erlang.nif_error(:nif_not_loaded)
 end

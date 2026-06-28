@@ -2,6 +2,7 @@
 
 [![CI](https://github.com/moss-piglet/metamorphic_log/actions/workflows/ci.yml/badge.svg)](https://github.com/moss-piglet/metamorphic_log/actions/workflows/ci.yml)
 [![Hex.pm](https://img.shields.io/hexpm/v/metamorphic_log.svg)](https://hex.pm/packages/metamorphic_log)
+[![Hexdocs](https://img.shields.io/badge/hex-docs-lightgreen.svg)](https://metamorphic-log.hexdocs.pm/MetamorphicLog.html)
 
 Elixir client for the [**metamorphic-log**](https://github.com/moss-piglet/metamorphic-log)
 transparency-log engine. It surfaces the engine's **verification + monitor SDK**

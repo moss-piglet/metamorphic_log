@@ -33,6 +33,7 @@
 
 use metamorphic_crypto::b64;
 use metamorphic_log::{
+    anchor::{self, AnchorCommitment, AnchorLink, AnchorRecord, Medium},
     checkpoint::Checkpoint,
     commitment::{self, Commitment, Opening},
     coniks::{self, AbsenceProof, LookupProof, Namespace},
@@ -725,6 +726,168 @@ fn decode_hashes<'a>(env: Env<'a>, hashes_b64: &[String]) -> Result<Vec<[u8; 32]
                 .map_err(|_| err(env, format!("hash must be 32 bytes, got {}", bytes.len())))
         })
         .collect()
+}
+
+// ─── Anchoring (Slice 8) ──────────────────────────────────────────────────────
+//
+// Backend-agnostic anchoring / attestation: the *format* and the *verification*
+// of committing a checkpoint head to an external, hard-to-equivocate medium
+// (chain, notary, WORM storage, another log). The crate is deliberately I/O-free
+// and so is this layer — the medium client, cadence, fees, and confirmation
+// depth are the operator's (mosskeys') job. The `CommitmentSink` trait and its
+// logic-only bridges are *not* wrapped: a trait with an associated error and a
+// backend belongs on the BEAM side. Instead the operator publishes/fetches the
+// commitment bytes itself, then compares them to `anchor_commitment/1`.
+
+fn anchor_commitment_from_str(s: &str) -> Option<AnchorCommitment> {
+    match s {
+        "sha3_512" => Some(AnchorCommitment::Sha3_512),
+        _ => None,
+    }
+}
+
+fn anchor_commitment_str(alg: AnchorCommitment) -> &'static str {
+    match alg {
+        AnchorCommitment::Sha3_512 => "sha3_512",
+        // `AnchorCommitment` is `#[non_exhaustive]`; a future menu entry surfaces
+        // here as "unknown" until this NIF is updated to name it.
+        _ => "unknown",
+    }
+}
+
+/// Build the canonical bytes of an anchor attestation record from an explicit
+/// checkpoint head. `commitment_alg` is a safe-menu tag string (`"sha3_512"`),
+/// `medium` a printable-ASCII identifier (e.g. `"ethereum/mainnet"`), `locator`
+/// the opaque external-commitment handle. Returns `{:ok, record_b64}`.
+#[rustler::nif]
+fn nif_anchor_record_canonical_bytes<'a>(
+    env: Env<'a>,
+    origin: &str,
+    size: u64,
+    root_b64: &str,
+    commitment_alg: &str,
+    medium: &str,
+    locator_b64: &str,
+) -> Term<'a> {
+    let alg = match anchor_commitment_from_str(commitment_alg) {
+        Some(a) => a,
+        None => {
+            return err(
+                env,
+                format!("unknown anchor commitment algorithm: {commitment_alg}"),
+            );
+        }
+    };
+    let root = decode_array!(env, root_b64, 32, "anchor root_hash");
+    let medium = match Medium::parse(medium) {
+        Ok(m) => m,
+        Err(e) => return err(env, e),
+    };
+    let locator = decode!(env, locator_b64);
+    match AnchorRecord::new(origin, size, root, alg, medium, locator) {
+        Ok(rec) => ok_val(env, b64::encode(&rec.canonical_bytes())),
+        Err(e) => err(env, e),
+    }
+}
+
+/// `{origin, size, root_b64, commitment_alg, medium, locator_b64}`
+fn anchor_record_tuple<'a>(env: Env<'a>, rec: &AnchorRecord) -> Term<'a> {
+    (
+        rec.origin().to_string(),
+        rec.size(),
+        b64::encode(rec.root_hash()),
+        anchor_commitment_str(rec.commitment_alg()),
+        rec.medium().as_str().to_string(),
+        b64::encode(rec.locator()),
+    )
+        .encode(env)
+}
+
+/// Parse a canonical anchor record, returning its fields. Validates the layout,
+/// format version, algorithm tag, medium grammar, and non-empty origin/locator.
+#[rustler::nif]
+fn nif_anchor_record_parse<'a>(env: Env<'a>, record_b64: &str) -> Term<'a> {
+    let bytes = decode!(env, record_b64);
+    match AnchorRecord::parse(&bytes) {
+        Ok(rec) => ok_val(env, anchor_record_tuple(env, &rec)),
+        Err(e) => err(env, e),
+    }
+}
+
+/// The fixed-size commitment over the record's checkpoint head — the value an
+/// operator publishes to (and re-fetches from) the external medium. Medium- and
+/// locator-independent: the same head yields the same commitment. Returns
+/// `{:ok, commitment_b64}`.
+#[rustler::nif(schedule = "DirtyCpu")]
+fn nif_anchor_commitment<'a>(env: Env<'a>, record_b64: &str) -> Term<'a> {
+    let bytes = decode!(env, record_b64);
+    match AnchorRecord::parse(&bytes) {
+        Ok(rec) => ok_val(env, b64::encode(&rec.anchor_commitment())),
+        Err(e) => err(env, e),
+    }
+}
+
+/// The RFC 6962 Merkle leaf hash of the record's canonical bytes, so an operator
+/// may also log its attestations as Layer-0 leaves. Returns `{:ok, hash_b64}`.
+#[rustler::nif(schedule = "DirtyCpu")]
+fn nif_anchor_record_rfc6962_leaf_hash<'a>(env: Env<'a>, record_b64: &str) -> Term<'a> {
+    let bytes = decode!(env, record_b64);
+    match AnchorRecord::parse(&bytes) {
+        Ok(rec) => ok_val(env, b64::encode(&rec.rfc6962_leaf_hash())),
+        Err(e) => err(env, e),
+    }
+}
+
+/// Verify an anchored checkpoint: that the attestation binds the checkpoint
+/// (verified from `note_text` + trusted `vkeys`), and — when `prev_note` is a
+/// previously-anchored checkpoint note — that the newer checkpoint is an
+/// append-only extension of it via the supplied RFC 9162 `consistency_proof`.
+///
+/// Pass `prev_note = nil` (and an empty proof) for the binding-only check.
+#[rustler::nif(schedule = "DirtyCpu")]
+fn nif_verify_anchored<'a>(
+    env: Env<'a>,
+    note_text: &str,
+    vkeys: Vec<String>,
+    record_b64: &str,
+    prev_note: Option<String>,
+    consistency_proof_b64: Vec<String>,
+) -> Term<'a> {
+    let trusted = match parse_vkeys(env, &vkeys) {
+        Ok(t) => t,
+        Err(t) => return t,
+    };
+    let cp = match Checkpoint::from_signed_note(note_text, &trusted) {
+        Ok(cp) => cp,
+        Err(e) => return err(env, e),
+    };
+    let bytes = decode!(env, record_b64);
+    let record = match AnchorRecord::parse(&bytes) {
+        Ok(r) => r,
+        Err(e) => return err(env, e),
+    };
+
+    match prev_note {
+        Some(prev) => {
+            let prev_cp = match Checkpoint::from_signed_note(&prev, &trusted) {
+                Ok(cp) => cp,
+                Err(e) => return err(env, e),
+            };
+            let proof = match decode_proof(env, &consistency_proof_b64) {
+                Ok(p) => p,
+                Err(t) => return t,
+            };
+            let link = AnchorLink::new(&prev_cp, &proof);
+            match anchor::verify_anchored(&cp, &record, Some(&link)) {
+                Ok(()) => ok(env),
+                Err(e) => err(env, e),
+            }
+        }
+        None => match anchor::verify_anchored(&cp, &record, None) {
+            Ok(()) => ok(env),
+            Err(e) => err(env, e),
+        },
+    }
 }
 
 // ─── NIF Registration ────────────────────────────────────────────────────────

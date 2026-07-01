@@ -84,7 +84,7 @@ defmodule MetamorphicLog.Keytrans do
       1
 
       iex> MetamorphicLog.Keytrans.suite_id(:metamorphic_hybrid_exp)
-      61440
+      61_440
 
   """
   @spec suite_id(suite()) :: 0..0xFFFF

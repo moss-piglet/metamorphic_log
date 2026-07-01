@@ -13,7 +13,7 @@
   absent_label_b64: "Y2Fyb2w=",
   suites: %{
     metamorphic_hybrid_exp: %{
-      suite_id: 61440,
+      suite_id: 61_440,
       vrf_public_b64: "CLuNuI4xHq/7Yt9ya16Sa3czvAGlb5SLJSUxiHiGizw=",
       root_b64: "z2UYxGg0lhqFpi09/v1v6Dp50n+XYvw5gHnKpPZVXtM=",
       search_proof_b64:

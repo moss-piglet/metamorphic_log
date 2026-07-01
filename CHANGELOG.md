@@ -4,6 +4,16 @@ All notable changes to `metamorphic_log` are documented here. The format is
 based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.3]
+
+Supply-chain currency bump. Bumps the wrapped crate dependencies
+`metamorphic-log 0.1.4 -> 0.1.5` and `metamorphic-crypto 0.9 -> 0.10`
+(published crates only; no `[patch]`/path deps). No canonical byte-format
+changes — inclusion/consistency, `key-history/v1`, CONIKS, signed-note/checkpoint,
+commitment, policy-v1, KEYTRANS, and ingestion are all unchanged. The wrapped
+`metamorphic-crypto 0.10` is additive only (adds a standalone HKDF-SHA512
+primitive that is unused here). `p256` stays pinned at `=0.14.0-rc.14`.
+
 ## [0.1.2]
 
 Brings the NIF up to parity with the `metamorphic-log` Rust crate **0.1.4**,

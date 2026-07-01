@@ -4,6 +4,45 @@ All notable changes to `metamorphic_log` are documented here. The format is
 based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.2]
+
+Brings the NIF up to parity with the `metamorphic-log` Rust crate **0.1.4**,
+adding the Slice 9 **KEYTRANS** (IETF combined-tree directory) verification
+surface and the namespace-policy **directory axis**. Bumps the wrapped crate
+dependencies `metamorphic-log 0.1.3 -> 0.1.4` and `metamorphic-crypto 0.8 -> 0.9`
+(published crates only; no `[patch]`/path deps). No canonical byte-format
+changes to any frozen layer — inclusion/consistency, `key-history/v1`, CONIKS,
+signed-note/checkpoint, commitment, policy-v1, and ingestion are all unchanged,
+and the CONIKS-route policy output is backward-compatible (new keys are
+additive).
+
+### Added
+
+- **KEYTRANS verification (`MetamorphicLog.Keytrans`).** Suite-aware,
+  relying-party verification of the IETF KEYTRANS combined-tree directory
+  (`draft-ietf-keytrans-protocol-04`), mirroring the browser WASM SDK's
+  `keytransVerify*Suite` surface. Stateless — recomputes everything from public
+  inputs (VRF public key, combined-tree root, label, proof).
+  - `verify_search/6` — greatest-version search (§6): the value at a label's
+    most recent version, or absence.
+  - `verify_fixed_version/6` — fixed-version search (§7).
+  - `verify_monitor/6` — monitoring (§8): a downgrade is rejected.
+  - `suite_id/1` — the §15.1 `suite_id` for a suite atom.
+  - The cipher **suite is always explicit** (no default): `:kt128_sha256_p256`
+    (`0x0001`), `:kt128_sha256_ed25519` (`0x0002`) — the on-spec IETF standard
+    suites (HMAC-SHA256 commitment) — and `:metamorphic_hybrid_exp` (`0xF000`),
+    the private hybrid-PQ suite.
+  - **Movable / experimental:** the proof wire is tagged `KEYTRANS_EXP_04` and
+    tracks the draft; it is deliberately not byte-frozen. The golden test
+    vectors are kept out of the frozen cross-language KAT set.
+- **Policy directory axis (`MetamorphicLog.Policy`).**
+  - Verified policies now expose `:directory_mode` (`:coniks` | `:keytrans`)
+    and `:keytrans_suite` (`:metamorphic_hybrid_exp` | `:kt128_sha256_p256` |
+    `:kt128_sha256_ed25519`) alongside the existing posture fields (additive,
+    backward-compatible; default to the CONIKS route).
+  - `enforce_directory_backend/2` — **declared == observed** for the directory
+    backend, accepting a `:coniks` / `:keytrans` atom or a raw `u16` id.
+
 ## [0.1.1]
 
 Brings the NIF up to parity with the `metamorphic-log` Rust crate **0.1.3**,

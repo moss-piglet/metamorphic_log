@@ -99,4 +99,15 @@ defmodule MetamorphicLog.Vectors do
   def kat_checkpoint_root_b64, do: "q1bnDR7DLfXk0sCC5tD4hbsBLg7p+9Gd4tT8H9wYnKE="
 
   def hex(s), do: Base.decode16!(s, case: :lower)
+
+  # ── KEYTRANS movable golden vectors (KEYTRANS_EXP_04) — Slice 9 ─────────────
+  # Rust-generated (crate 0.1.4) search / fixed-version / monitor proofs for all
+  # three §15.1 suites. Movable: NOT in the frozen KAT set. See the fixture file
+  # header. Loaded once, at compile time, from the committed data file.
+  @keytrans_fixtures @vectors_dir
+                     |> Path.join("keytrans_movable_fixtures.exs")
+                     |> Code.eval_file()
+                     |> elem(0)
+
+  def keytrans_fixtures, do: @keytrans_fixtures
 end

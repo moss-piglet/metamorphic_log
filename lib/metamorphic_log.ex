@@ -20,6 +20,8 @@ defmodule MetamorphicLog do
   - `MetamorphicLog.Note` — C2SP signed-note verification (Ed25519 + hybrid PQ)
   - `MetamorphicLog.Coniks` — CONIKS key-transparency lookup/absence proofs
   - `MetamorphicLog.Commitment` — SHA3-512 commitment verification
+  - `MetamorphicLog.Keytrans` — IETF KEYTRANS combined-tree verification
+    (search / fixed-version / monitor; experimental, suite-aware)
   - `MetamorphicLog.Policy` — signed namespace policy + declared==observed
   - `MetamorphicLog.Leaf` — canonical `mosslet/key-history/v1` leaf encoding
   - `MetamorphicLog.Ingest` — dedup keys, flush geometry, Merkle recomputation

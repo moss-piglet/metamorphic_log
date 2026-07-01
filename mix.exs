@@ -1,7 +1,7 @@
 defmodule MetamorphicLog.MixProject do
   use Mix.Project
 
-  @version "0.1.1"
+  @version "0.1.2"
   @repo_url "https://github.com/moss-piglet/metamorphic_log"
 
   def project do
@@ -83,6 +83,7 @@ defmodule MetamorphicLog.MixProject do
         Proofs: [MetamorphicLog.Proof],
         Checkpoints: [MetamorphicLog.Checkpoint, MetamorphicLog.Note],
         "Key Transparency (CONIKS)": [MetamorphicLog.Coniks, MetamorphicLog.Commitment],
+        "Key Transparency (KEYTRANS)": [MetamorphicLog.Keytrans],
         "Namespace Policy": [MetamorphicLog.Policy],
         Leaves: [MetamorphicLog.Leaf],
         Ingestion: [MetamorphicLog.Ingest],

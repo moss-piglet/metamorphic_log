@@ -112,6 +112,40 @@ defmodule MetamorphicLog.Native do
   def nif_policy_enforce_commitment_hash(_signed_b64, _observed),
     do: :erlang.nif_error(:nif_not_loaded)
 
+  def nif_policy_enforce_directory_backend(_signed_b64, _observed_backend_id),
+    do: :erlang.nif_error(:nif_not_loaded)
+
+  # KEYTRANS (combined-tree directory) verification — Slice 9
+  def nif_keytrans_verify_search(
+        _suite_id,
+        _context,
+        _vrf_public_b64,
+        _root_b64,
+        _label_b64,
+        _proof_b64
+      ),
+      do: :erlang.nif_error(:nif_not_loaded)
+
+  def nif_keytrans_verify_fixed_version(
+        _suite_id,
+        _context,
+        _vrf_public_b64,
+        _root_b64,
+        _label_b64,
+        _proof_b64
+      ),
+      do: :erlang.nif_error(:nif_not_loaded)
+
+  def nif_keytrans_verify_monitor(
+        _suite_id,
+        _context,
+        _vrf_public_b64,
+        _root_b64,
+        _label_b64,
+        _proof_b64
+      ),
+      do: :erlang.nif_error(:nif_not_loaded)
+
   # Ingestion primitives
   def nif_dedup_key_from_record(_namespace, _payload_b64),
     do: :erlang.nif_error(:nif_not_loaded)

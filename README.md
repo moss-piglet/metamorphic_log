@@ -27,8 +27,15 @@ recomputed and verified, unchanged, on the server.
 - **CONIKS key transparency** — privacy-preserving lookup/absence proof
   verification over an ECVRF-blinded directory, with SHA3-512 commitments
   (`MetamorphicLog.Coniks`, `MetamorphicLog.Commitment`).
+- **KEYTRANS key transparency** *(experimental)* — suite-aware verification of
+  the IETF combined-tree directory: greatest-version search, fixed-version
+  search, and monitoring, across the on-spec IETF standard suites
+  (`KT_128_SHA256_P256`, `KT_128_SHA256_Ed25519`) and a private hybrid-PQ suite
+  (`MetamorphicLog.Keytrans`). The proof wire is **movable** — it tracks
+  `draft-ietf-keytrans-protocol` and is not byte-frozen.
 - **Namespace policy** — signed, in-log posture (suite/level/commitment/VRF
-  mode) verification and **declared == observed** enforcement
+  mode, plus the CONIKS-vs-KEYTRANS directory route and its suite) verification
+  and **declared == observed** enforcement, including the directory backend
   (`MetamorphicLog.Policy`).
 - **Canonical leaves** — the `mosslet/key-history/v1` canonical encoding and
   hashes (`MetamorphicLog.Leaf`).
@@ -67,6 +74,12 @@ NIF from source instead (requires a Rust toolchain), set
   MetamorphicLog.Policy.verify(signed_policy)
 
 :ok = MetamorphicLog.Policy.enforce_vrf_suite_id(signed_policy, 0x03)
+
+# Verify an (experimental) KEYTRANS search proof under an explicit suite
+{:ok, {:present, value_b64}} =
+  MetamorphicLog.Keytrans.verify_search(
+    :kt128_sha256_p256, context, vrf_public, root, label, proof
+  )
 ```
 
 ## Wire format

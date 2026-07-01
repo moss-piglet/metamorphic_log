@@ -648,9 +648,9 @@ dependencies = [
 
 [[package]]
 name = "metamorphic-crypto"
-version = "0.8.1"
+version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "25f62610b71ce8819a729e2de92eeb91e10aaa4ad530a7181cdaa7d91be77e4f"
+checksum = "5cde1201ef5d91d8a27c57659abff261fcb5ce49be737f26f4ba70235ca45e1c"
 dependencies = [
  "aes-gcm",
  "argon2",
@@ -664,10 +664,13 @@ dependencies = [
  "getrandom 0.2.17",
  "getrandom 0.4.3",
  "hkdf",
+ "hmac",
  "js-sys",
  "ml-dsa",
  "ml-kem",
+ "p256",
  "p521",
+ "rfc6979",
  "sha2 0.11.0",
  "sha3",
  "thiserror",
@@ -679,9 +682,9 @@ dependencies = [
 
 [[package]]
 name = "metamorphic-log"
-version = "0.1.3"
+version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8c6b8acbd3cf720781b971af196b77bf075afcb044fc2558d10637a049221bc4"
+checksum = "ea5e3efbcc19c92125f9edc8c4aaa15945b88bd24a00d9d1464b79092f14287b"
 dependencies = [
  "getrandom 0.2.17",
  "js-sys",
@@ -692,7 +695,7 @@ dependencies = [
 
 [[package]]
 name = "metamorphic_log_nif"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "metamorphic-crypto",
  "metamorphic-log",
@@ -761,6 +764,19 @@ name = "opaque-debug"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c08d65885ee38876c4f86fa503fb49d7b507c2b62552df7c70b2fce627e06381"
+
+[[package]]
+name = "p256"
+version = "0.14.0-rc.14"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c855a8d2ffd346aa03122626f22e96e3aa75e3bfe64e6bf6cb82f71821ed6ae7"
+dependencies = [
+ "ecdsa",
+ "elliptic-curve",
+ "primefield",
+ "primeorder",
+ "sha2 0.11.0",
+]
 
 [[package]]
 name = "p521"

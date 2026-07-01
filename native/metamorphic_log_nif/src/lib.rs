@@ -37,10 +37,15 @@ use metamorphic_log::{
     checkpoint::Checkpoint,
     commitment::{self, Commitment, Opening},
     coniks::{self, AbsenceProof, LookupProof, Namespace},
+    directory::{DirectoryBackendId, SearchOutcome},
     ingest::{self, DedupKey},
+    keytrans::{KeytransVerifier, KtSuite},
     leaf::key_history_v1,
     note::{SignedNote, VerifierKey},
-    policy::{CheckpointSuite, CommitmentHash, SecurityLevel, SignedPolicy, VrfMode},
+    policy::{
+        CheckpointSuite, CommitmentHash, DirectoryMode, KeytransSuite, SecurityLevel, SignedPolicy,
+        VrfMode,
+    },
     tile::{self, Tile},
     verify_consistency, verify_inclusion,
     vrf::{Ecvrf, VrfPublicKey},
@@ -48,7 +53,7 @@ use metamorphic_log::{
 use rustler::{Encoder, Env, Term};
 
 mod atoms {
-    rustler::atoms! { ok, error }
+    rustler::atoms! { ok, error, present, absent }
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -486,6 +491,21 @@ fn vrf_mode_str(mode: VrfMode) -> &'static str {
     }
 }
 
+fn directory_mode_str(mode: DirectoryMode) -> &'static str {
+    match mode {
+        DirectoryMode::Coniks => "coniks",
+        DirectoryMode::Keytrans => "keytrans",
+    }
+}
+
+fn keytrans_suite_str(suite: KeytransSuite) -> &'static str {
+    match suite {
+        KeytransSuite::MetamorphicHybridExp => "metamorphic_hybrid_exp",
+        KeytransSuite::Kt128Sha256P256 => "kt128_sha256_p256",
+        KeytransSuite::Kt128Sha256Ed25519 => "kt128_sha256_ed25519",
+    }
+}
+
 #[rustler::nif(schedule = "DirtyCpu")]
 fn nif_signed_policy_verify<'a>(env: Env<'a>, signed_b64: &str) -> Term<'a> {
     let bytes = decode!(env, signed_b64);
@@ -501,8 +521,10 @@ fn nif_signed_policy_verify<'a>(env: Env<'a>, signed_b64: &str) -> Term<'a> {
         Ok(h) => h,
         Err(e) => return err(env, e),
     };
-    // Grouped into two 5-tuples (Rustler tuples max at arity 7); the Elixir
-    // wrapper reassembles these into a single policy map.
+    // Grouped into 5-tuples (Rustler tuples max at arity 7); the Elixir
+    // wrapper reassembles these into a single policy map. The third group
+    // carries the Slice 9 directory axis (additive; CONIKS-route output is
+    // unchanged apart from these new, defaulted fields).
     let fields = (
         (
             policy.namespace().as_str().to_string(),
@@ -517,6 +539,10 @@ fn nif_signed_policy_verify<'a>(env: Env<'a>, signed_b64: &str) -> Term<'a> {
             policy.created_at(),
             b64::encode(&policy_hash),
             b64::encode(&policy.rfc6962_leaf_hash()),
+        ),
+        (
+            directory_mode_str(policy.directory_mode()),
+            keytrans_suite_str(policy.keytrans_suite()),
         ),
     );
     ok_val(env, fields)
@@ -606,6 +632,134 @@ fn nif_policy_enforce_commitment_hash<'a>(
     };
     match policy.enforce_commitment_hash(observed_hash) {
         Ok(()) => ok(env),
+        Err(e) => err(env, e),
+    }
+}
+
+#[rustler::nif]
+fn nif_policy_enforce_directory_backend<'a>(
+    env: Env<'a>,
+    signed_b64: &str,
+    observed_backend_id: u16,
+) -> Term<'a> {
+    let bytes = decode!(env, signed_b64);
+    let signed = match SignedPolicy::parse(&bytes) {
+        Ok(s) => s,
+        Err(e) => return err(env, e),
+    };
+    let policy = match signed.verify() {
+        Ok(p) => p,
+        Err(e) => return err(env, e),
+    };
+    match policy.enforce_directory_backend(DirectoryBackendId::from_u16(observed_backend_id)) {
+        Ok(()) => ok(env),
+        Err(e) => err(env, e),
+    }
+}
+
+// ─── KEYTRANS (combined-tree directory) verification — Slice 9 ────────────────
+//
+// Suite-aware relying-party verification over the crate's byte-oriented
+// `KeytransVerifier` APIs (the same movable `KEYTRANS_EXP_04` wire the WASM SDK
+// verifies). The suite is always an explicit argument — the caller maps the
+// §15.1 `suite_id` u16 to a `KtSuite` (`KtSuite::from_suite_id`), from which we
+// take the matching VRF (`suite.vrf()`); nothing defaults to a hardcoded suite.
+//
+// `context` is the commitment domain-separation string, `vrf_public_b64` the
+// operator's VRF public key, `root_b64` the published combined-tree root,
+// `label_b64` the queried label, and `proof_b64` the movable proof blob.
+
+/// `{:ok, {:present, value_b64}}` | `{:ok, :absent}` from a `SearchOutcome`.
+fn search_outcome_term<'a>(env: Env<'a>, outcome: SearchOutcome) -> Term<'a> {
+    match outcome {
+        SearchOutcome::Present(value) => ok_val(env, (atoms::present(), b64::encode(&value))),
+        SearchOutcome::Absent => ok_val(env, atoms::absent()),
+    }
+}
+
+/// Build a suite-aware verifier from an explicit §15.1 suite id and public key.
+fn keytrans_verifier<'a>(
+    env: Env<'a>,
+    suite_id: u16,
+    context: &str,
+    vrf_public_b64: &str,
+) -> Result<KeytransVerifier, Term<'a>> {
+    let suite = KtSuite::from_suite_id(suite_id).map_err(|e| err(env, e))?;
+    let vrf_public =
+        VrfPublicKey::from_bytes(b64::decode(vrf_public_b64).map_err(|e| err(env, e))?);
+    Ok(KeytransVerifier::new_with_suite(
+        context,
+        suite,
+        suite.vrf(),
+        vrf_public,
+    ))
+}
+
+#[rustler::nif(schedule = "DirtyCpu")]
+fn nif_keytrans_verify_search<'a>(
+    env: Env<'a>,
+    suite_id: u16,
+    context: &str,
+    vrf_public_b64: &str,
+    root_b64: &str,
+    label_b64: &str,
+    proof_b64: &str,
+) -> Term<'a> {
+    let verifier = match keytrans_verifier(env, suite_id, context, vrf_public_b64) {
+        Ok(v) => v,
+        Err(t) => return t,
+    };
+    let root = decode!(env, root_b64);
+    let label = decode!(env, label_b64);
+    let proof = decode!(env, proof_b64);
+    match verifier.verify_search_bytes(&root, &label, &proof) {
+        Ok(outcome) => search_outcome_term(env, outcome),
+        Err(e) => err(env, e),
+    }
+}
+
+#[rustler::nif(schedule = "DirtyCpu")]
+fn nif_keytrans_verify_fixed_version<'a>(
+    env: Env<'a>,
+    suite_id: u16,
+    context: &str,
+    vrf_public_b64: &str,
+    root_b64: &str,
+    label_b64: &str,
+    proof_b64: &str,
+) -> Term<'a> {
+    let verifier = match keytrans_verifier(env, suite_id, context, vrf_public_b64) {
+        Ok(v) => v,
+        Err(t) => return t,
+    };
+    let root = decode!(env, root_b64);
+    let label = decode!(env, label_b64);
+    let proof = decode!(env, proof_b64);
+    match verifier.verify_fixed_version_bytes(&root, &label, &proof) {
+        Ok(outcome) => search_outcome_term(env, outcome),
+        Err(e) => err(env, e),
+    }
+}
+
+#[rustler::nif(schedule = "DirtyCpu")]
+fn nif_keytrans_verify_monitor<'a>(
+    env: Env<'a>,
+    suite_id: u16,
+    context: &str,
+    vrf_public_b64: &str,
+    root_b64: &str,
+    label_b64: &str,
+    proof_b64: &str,
+) -> Term<'a> {
+    let verifier = match keytrans_verifier(env, suite_id, context, vrf_public_b64) {
+        Ok(v) => v,
+        Err(t) => return t,
+    };
+    let root = decode!(env, root_b64);
+    let label = decode!(env, label_b64);
+    let proof = decode!(env, proof_b64);
+    match verifier.verify_monitor_bytes(&root, &label, &proof) {
+        Ok(verified) => ok_val(env, verified),
         Err(e) => err(env, e),
     }
 }

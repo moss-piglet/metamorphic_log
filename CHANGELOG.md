@@ -4,6 +4,19 @@ All notable changes to `metamorphic_log` are documented here. The format is
 based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.4]
+
+Supply-chain / dependency maintenance release. Bumps the wrapped crate
+dependencies `metamorphic-log 0.1.5 -> 0.1.6` and
+`metamorphic-crypto 0.10.0 -> 0.10.2`, refreshing the NIF `Cargo.lock` to pull
+in the transitive **`cmov` 0.5.3 -> 0.5.4** security fix (RustSec
+**GHSA-3rjw-m598-pq24 / CVE-2026-50185**, aarch64 `Cmov`/`CmovEq` correctness),
+`aes-gcm` 0.11.0 (rc -> stable), and `anyhow` 1.0.103 (RUSTSEC-2026-0190,
+build-tooling only). Dependency-only — **no canonical byte-format changes**;
+inclusion/consistency, `key-history/v1`, CONIKS, signed-note/checkpoint,
+commitment, policy-v1, KEYTRANS, and ingestion are all unchanged. Precompiled
+NIFs rebuilt for all targets.
+
 ## [0.1.3]
 
 Supply-chain currency bump. Bumps the wrapped crate dependencies

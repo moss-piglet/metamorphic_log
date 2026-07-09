@@ -74,6 +74,15 @@ defmodule MetamorphicLog.Native do
   def nif_checkpoint_verify_consistency(_older_note, _newer_note, _vkeys, _proof_b64),
     do: :erlang.nif_error(:nif_not_loaded)
 
+  # Signing / encoding (producer helpers)
+  def nif_vkey_encode_hybrid(_name, _public_key_b64), do: :erlang.nif_error(:nif_not_loaded)
+  def nif_vkey_encode_ed25519(_name, _public_key_b64), do: :erlang.nif_error(:nif_not_loaded)
+  def nif_note_sign_hybrid(_text, _name, _secret_key_b64), do: :erlang.nif_error(:nif_not_loaded)
+  def nif_note_sign_ed25519(_text, _name, _seed_b64), do: :erlang.nif_error(:nif_not_loaded)
+
+  def nif_checkpoint_sign_hybrid(_origin, _size, _root_b64, _name, _secret_key_b64),
+    do: :erlang.nif_error(:nif_not_loaded)
+
   # CONIKS
   def nif_coniks_verify_lookup(
         _namespace,
@@ -99,6 +108,22 @@ defmodule MetamorphicLog.Native do
 
   # Namespace policy
   def nif_signed_policy_verify(_signed_b64), do: :erlang.nif_error(:nif_not_loaded)
+
+  def nif_signed_policy_sign(
+        _namespace,
+        _policy_schema_version,
+        _security_level,
+        _checkpoint_suite,
+        _commitment_hash,
+        _vrf_mode,
+        _directory_mode,
+        _keytrans_suite,
+        _effective_from,
+        _created_at,
+        _prev_policy_hash_b64,
+        _secret_key_b64
+      ),
+      do: :erlang.nif_error(:nif_not_loaded)
 
   def nif_policy_enforce_checkpoint_signing_key(_signed_b64, _public_key_b64),
     do: :erlang.nif_error(:nif_not_loaded)

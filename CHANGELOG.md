@@ -4,6 +4,51 @@ All notable changes to `metamorphic_log` are documented here. The format is
 based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.5]
+
+Adds the **signing (producer) surface** to complement the existing verification
+APIs, so operators (checkpoint publishers, witnesses, policy authors) can
+produce C2SP artifacts server-side from a metamorphic-crypto composite key or a
+raw Ed25519 seed. Additive — no canonical byte-format changes; every existing
+verification, proof, CONIKS, KEYTRANS, commitment, and ingestion path is
+unchanged.
+
+### Added
+
+- `MetamorphicLog.VerifierKey.encode_hybrid/2` and `encode_ed25519/2` — derive
+  the canonical C2SP `vkey` text (`<name>+<hex(key_id)>+<base64(type_id ||
+  public_key)>`) from a stored public key, ready to feed
+  `Checkpoint.verify/2` / `Note.verify/2`.
+- `MetamorphicLog.Note.sign_hybrid/3` and `sign_ed25519/3` — produce a signed
+  note over an arbitrary body.
+- `MetamorphicLog.Checkpoint.sign_hybrid/5` — sign an `origin`/`size`/`root`
+  checkpoint head as a hybrid post-quantum signed note.
+- `MetamorphicLog.Policy.sign/2` — sign a namespace policy (CONIKS or KEYTRANS
+  directory axis) into the canonical `SignedPolicy` envelope, with atom→string
+  enum validation ahead of the NIF boundary.
+
+  ML-DSA signing is hedged (randomized): signature bytes are not reproducible,
+  but the derived verifier key verifies deterministically.
+
+### Fixed
+
+- **Dirty-scheduler stack overflow on hybrid signing.** ML-DSA's hedged signing
+  path allocates large intermediate lattice matrices on the stack, overflowing
+  the BEAM dirty-CPU scheduler thread's default stack (`+sssdcpu`, ~320 KB) and
+  crashing the VM with SIGBUS. The signing NIFs now run the core operation on a
+  dedicated thread with an ample (32 MiB) stack and block the dirty scheduler on
+  the join, so callers need no `+sssdcpu` tuning in `vm.args`. Ed25519 signing
+  and all verification paths were unaffected.
+
+### Changed
+
+- Bumps the wrapped crate dependency `metamorphic-log 0.1.6 -> 0.1.9` (adds the
+  `checkpoint::sign_checkpoint_hybrid` convenience and the note/vkey/policy
+  signing primitives consumed here). `metamorphic-crypto` stays at `0.10.2`.
+- Bumps `rustler 0.37 -> 0.38` and raises the NIF crate MSRV `1.85 -> 1.91`
+  (required by `metamorphic-crypto`'s toolchain). Adds `metamorphic_crypto
+  ~> 0.8.1` as a **test-only** dependency for producer↔verifier round-trips.
+
 ## [0.1.4]
 
 Supply-chain / dependency maintenance release. Bumps the wrapped crate

@@ -1,6 +1,6 @@
 defmodule MetamorphicLog.Note do
   @moduledoc """
-  C2SP signed-note verification.
+  C2SP signed-note verification and signing.
 
   A signed note is a UTF-8 text body followed by one or more signature lines, as
   defined by the [C2SP signed-note](https://github.com/C2SP/C2SP/blob/main/signed-note.md)
@@ -45,5 +45,48 @@ defmodule MetamorphicLog.Note do
   @spec verified?(String.t(), [String.t()]) :: boolean()
   def verified?(note_text, trusted_vkeys) do
     match?({:ok, _}, verify(note_text, trusted_vkeys))
+  end
+
+  @doc """
+  Sign `text` with an additive hybrid PQ composite secret key, returning the
+  complete C2SP signed-note text (body + blank line + the hybrid signature
+  line).
+
+  `text` must be the exact note body **ending in a newline**. `name` is the
+  C2SP key name; `secret_key_b64` is the base64 metamorphic-crypto composite
+  secret key. ML-DSA signing is hedged, so the signature bytes are not
+  reproducible — but the verifier key derived from `secret_key_b64`'s public
+  half (see `MetamorphicLog.VerifierKey.encode_hybrid/2`) verifies the result
+  deterministically.
+
+  Returns `{:ok, note_text}` or `{:error, reason}` (invalid name, undecodable
+  secret key, or signing failure).
+
+  ## Example
+
+      {:ok, note} = MetamorphicLog.Note.sign_hybrid("origin/log\\n7\\ncm9vdA==\\n", "origin/log", sk)
+
+  """
+  @spec sign_hybrid(text :: String.t(), name :: String.t(), secret_key_b64 :: String.t()) ::
+          {:ok, String.t()} | {:error, String.t()}
+  def sign_hybrid(text, name, secret_key_b64)
+      when is_binary(text) and is_binary(name) and is_binary(secret_key_b64) do
+    Native.nif_note_sign_hybrid(text, name, secret_key_b64)
+  end
+
+  @doc """
+  Sign `text` with a raw 32-byte Ed25519 seed (base64), returning the complete
+  classical (witness-compatible) C2SP signed-note text.
+
+  `text` must be the exact note body ending in a newline. `name` is the C2SP
+  key name; `seed_b64` is the base64 32-byte Ed25519 seed. Returns
+  `{:ok, note_text}` or `{:error, reason}` (invalid name or a seed that is not
+  32 bytes).
+  """
+  @spec sign_ed25519(text :: String.t(), name :: String.t(), seed_b64 :: String.t()) ::
+          {:ok, String.t()} | {:error, String.t()}
+  def sign_ed25519(text, name, seed_b64)
+      when is_binary(text) and is_binary(name) and is_binary(seed_b64) do
+    Native.nif_note_sign_ed25519(text, name, seed_b64)
   end
 end

@@ -103,6 +103,125 @@ defmodule MetamorphicLog.Policy do
     end
   end
 
+  @doc """
+  Sign a namespace policy and return its base64-encoded signed envelope, the
+  producer counterpart to `verify/1`.
+
+  `params` is a keyword list or map declaring the posture to attest. The enum
+  fields take the **same atoms `verify/1` returns**, so a verified policy can be
+  re-signed by feeding its struct fields straight back in:
+
+  * `:namespace` (required) — the namespace identity string
+  * `:policy_schema_version` (required) — non-negative integer
+  * `:security_level` (required) — `:cat3` | `:cat5`
+  * `:checkpoint_suite` (required) — `:hybrid` | `:hybrid_matched` | `:pure_cnsa2`
+  * `:commitment_hash` (required) — `:sha3_256` | `:sha3_512`
+  * `:vrf_mode` (required) — `:classical` | `:hybrid_output` | `:pure_pq_experimental`
+  * `:directory_mode` (required) — `:coniks` | `:keytrans`
+  * `:keytrans_suite` (required only when `:directory_mode` is `:keytrans`) —
+    `:metamorphic_hybrid_exp` | `:kt128_sha256_p256` | `:kt128_sha256_ed25519`;
+    ignored for the CONIKS route (defaults to `:metamorphic_hybrid_exp`)
+  * `:effective_from` (required) — non-negative integer timestamp
+  * `:created_at` (required) — non-negative integer timestamp
+  * `:prev_policy_hash` (optional) — base64 of the previous policy's 64-byte
+    hash to chain revisions, or `nil` for the first policy
+
+  `secret_key_b64` is the base64 metamorphic-crypto composite secret key. ML-DSA
+  signing is hedged, so the envelope bytes are not reproducible, but the result
+  verifies deterministically via `verify/1`.
+
+  Returns `{:ok, signed_b64}` or `{:error, reason}` (unknown enum value,
+  malformed namespace, a `prev_policy_hash` that is not 64 bytes, or a signing
+  failure).
+
+  ## Example
+
+      {:ok, signed} =
+        MetamorphicLog.Policy.sign(
+          [
+            namespace: "metamorphic.app/log",
+            policy_schema_version: 1,
+            security_level: :cat3,
+            checkpoint_suite: :hybrid,
+            commitment_hash: :sha3_256,
+            vrf_mode: :classical,
+            directory_mode: :coniks,
+            effective_from: 0,
+            created_at: 0
+          ],
+          secret_key_b64
+        )
+
+  """
+  @keytrans_suites [:metamorphic_hybrid_exp, :kt128_sha256_p256, :kt128_sha256_ed25519]
+
+  @spec sign(
+          params :: Enumerable.t(),
+          secret_key_b64 :: String.t()
+        ) :: {:ok, String.t()} | {:error, String.t()}
+  def sign(params, secret_key_b64) when is_binary(secret_key_b64) do
+    p = Map.new(params)
+
+    with {:ok, namespace} <- fetch_binary(p, :namespace),
+         {:ok, schema_version} <- fetch_non_neg_int(p, :policy_schema_version),
+         {:ok, level} <- fetch_enum(p, :security_level, [:cat3, :cat5]),
+         {:ok, suite} <-
+           fetch_enum(p, :checkpoint_suite, [:hybrid, :hybrid_matched, :pure_cnsa2]),
+         {:ok, commit} <- fetch_enum(p, :commitment_hash, [:sha3_256, :sha3_512]),
+         {:ok, vrf} <-
+           fetch_enum(p, :vrf_mode, [:classical, :hybrid_output, :pure_pq_experimental]),
+         {:ok, dir} <- fetch_enum(p, :directory_mode, [:coniks, :keytrans]),
+         {:ok, kt} <-
+           fetch_enum(p, :keytrans_suite, @keytrans_suites, :metamorphic_hybrid_exp),
+         {:ok, effective_from} <- fetch_non_neg_int(p, :effective_from),
+         {:ok, created_at} <- fetch_non_neg_int(p, :created_at) do
+      Native.nif_signed_policy_sign(
+        namespace,
+        schema_version,
+        Atom.to_string(level),
+        Atom.to_string(suite),
+        Atom.to_string(commit),
+        Atom.to_string(vrf),
+        Atom.to_string(dir),
+        Atom.to_string(kt),
+        effective_from,
+        created_at,
+        Map.get(p, :prev_policy_hash),
+        secret_key_b64
+      )
+    end
+  end
+
+  defp fetch_binary(p, key) do
+    case Map.fetch(p, key) do
+      {:ok, value} when is_binary(value) -> {:ok, value}
+      {:ok, _} -> {:error, "#{key} must be a string"}
+      :error -> {:error, "missing required policy field: #{key}"}
+    end
+  end
+
+  defp fetch_non_neg_int(p, key) do
+    case Map.fetch(p, key) do
+      {:ok, value} when is_integer(value) and value >= 0 -> {:ok, value}
+      {:ok, _} -> {:error, "#{key} must be a non-negative integer"}
+      :error -> {:error, "missing required policy field: #{key}"}
+    end
+  end
+
+  defp fetch_enum(p, key, allowed, default \\ :__required__) do
+    case Map.get(p, key, default) do
+      :__required__ ->
+        {:error, "missing required policy field: #{key}"}
+
+      value ->
+        if value in allowed do
+          {:ok, value}
+        else
+          {:error, "invalid #{key}: #{inspect(value)} (allowed: #{inspect(allowed)})"}
+        end
+    end
+  end
+
   defp security_level("cat3"), do: :cat3
   defp security_level("cat5"), do: :cat5
 

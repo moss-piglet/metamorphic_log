@@ -97,6 +97,42 @@ defmodule MetamorphicLog.Checkpoint do
     Native.nif_checkpoint_verify_consistency(older_note, newer_note, trusted_vkeys, proof_b64)
   end
 
+  @doc """
+  Build a checkpoint body and sign it with a hybrid PQ composite secret key in
+  one call, returning the complete C2SP signed-note text ready to publish.
+
+  `origin` is the log identity line; `size` the tree size; `root_b64` the
+  base64 of the exactly 32-byte RFC 6962 root at `size`; `name` the C2SP key
+  name (usually the origin); `secret_key_b64` the base64 composite secret key.
+
+  This is the one-call producer path for a checkpoint publisher: it shares the
+  core's `Checkpoint` + `sign_hybrid` code path, so it never hand-assembles the
+  byte layout. The verifier key derived from `secret_key_b64`'s public half
+  (`MetamorphicLog.VerifierKey.encode_hybrid/2`) verifies the produced note via
+  `verify/2`.
+
+  Returns `{:ok, note_text}` or `{:error, reason}` (malformed checkpoint —
+  empty origin or non-32-byte root — or a signing failure).
+
+  ## Example
+
+      {:ok, note} =
+        MetamorphicLog.Checkpoint.sign_hybrid("origin/log", 10, root_b64, "origin/log", sk)
+
+  """
+  @spec sign_hybrid(
+          origin :: String.t(),
+          size :: non_neg_integer(),
+          root_b64 :: String.t(),
+          name :: String.t(),
+          secret_key_b64 :: String.t()
+        ) :: {:ok, String.t()} | {:error, String.t()}
+  def sign_hybrid(origin, size, root_b64, name, secret_key_b64)
+      when is_binary(origin) and is_integer(size) and size >= 0 and is_binary(root_b64) and
+             is_binary(name) and is_binary(secret_key_b64) do
+    Native.nif_checkpoint_sign_hybrid(origin, size, root_b64, name, secret_key_b64)
+  end
+
   # ─── Internal ────────────────────────────────────────────────────────────
 
   defp to_struct({:ok, {origin, size, root, extensions}}) do

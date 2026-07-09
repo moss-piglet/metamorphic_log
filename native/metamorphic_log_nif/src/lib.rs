@@ -34,17 +34,17 @@
 use metamorphic_crypto::b64;
 use metamorphic_log::{
     anchor::{self, AnchorCommitment, AnchorLink, AnchorRecord, Medium},
-    checkpoint::Checkpoint,
+    checkpoint::{self, Checkpoint},
     commitment::{self, Commitment, Opening},
     coniks::{self, AbsenceProof, LookupProof, Namespace},
     directory::{DirectoryBackendId, SearchOutcome},
     ingest::{self, DedupKey},
     keytrans::{KeytransVerifier, KtSuite},
     leaf::key_history_v1,
-    note::{SignedNote, VerifierKey},
+    note::{self, SignedNote, VerifierKey},
     policy::{
-        CheckpointSuite, CommitmentHash, DirectoryMode, KeytransSuite, SecurityLevel, SignedPolicy,
-        VrfMode,
+        CheckpointSuite, CommitmentHash, DirectoryMode, KeytransSuite, NamespacePolicy,
+        SecurityLevel, SignedPolicy, VrfMode,
     },
     tile::{self, Tile},
     verify_consistency, verify_inclusion,
@@ -97,6 +97,37 @@ macro_rules! decode_array {
             }
         }
     }};
+}
+
+/// Run a signing closure on a dedicated thread with an ample stack.
+///
+/// ML-DSA signing allocates large intermediate lattice matrices on the stack
+/// (the hedged rejection-sampling path expands and buffers several polynomial
+/// vectors). That working set overflows the BEAM dirty-CPU scheduler thread's
+/// modest default stack (`+sssdcpu`, ~320 KB), which faults the guard page and
+/// takes the whole VM down with SIGBUS. Ed25519 signing and every verification
+/// path stay well within the default and are unaffected.
+///
+/// Rather than push a `+sssdcpu` requirement onto every consumer's `vm.args`,
+/// we own the guarantee here: the actual sign runs on a scoped thread with a
+/// generous stack (comfortably covering ML-DSA-87 at Cat-5), and the dirty
+/// scheduler thread blocks on the join — exactly the kind of bounded, blocking
+/// work dirty schedulers exist for. The closure returns owned, `Send` values
+/// (`Result<String, String>`); Rustler term construction stays on the caller.
+fn on_signing_stack<F>(f: F) -> Result<String, String>
+where
+    F: FnOnce() -> Result<String, String> + Send,
+{
+    // 32 MiB: only touched pages are committed, so the reservation is cheap.
+    const SIGNING_STACK_BYTES: usize = 32 * 1024 * 1024;
+    std::thread::scope(|scope| {
+        std::thread::Builder::new()
+            .stack_size(SIGNING_STACK_BYTES)
+            .spawn_scoped(scope, f)
+            .map_err(|e| format!("failed to spawn signing thread: {e}"))?
+            .join()
+            .map_err(|_| "signing thread panicked".to_string())?
+    })
 }
 
 /// Decode a list of base64 proof nodes into `Vec<Vec<u8>>`.
@@ -376,6 +407,83 @@ fn nif_checkpoint_verify_consistency<'a>(
     }
 }
 
+// ─── Signed-note / checkpoint / vkey signing (producer helpers) ──────────────
+//
+// Server-side signing for operators (witnesses, checkpoint publishers, policy
+// authors). The composite signing primitives live in the audited core; this
+// layer only marshals base64/text. ML-DSA signing is hedged — signature bytes
+// are not reproducible, but the derived verifier key verifies deterministically.
+
+#[rustler::nif]
+fn nif_vkey_encode_hybrid<'a>(env: Env<'a>, name: &str, public_key_b64: &str) -> Term<'a> {
+    let public_key = decode!(env, public_key_b64);
+    match VerifierKey::new_hybrid(name, &public_key) {
+        Ok(vkey) => ok_val(env, vkey.encode()),
+        Err(e) => err(env, e),
+    }
+}
+
+#[rustler::nif]
+fn nif_vkey_encode_ed25519<'a>(env: Env<'a>, name: &str, public_key_b64: &str) -> Term<'a> {
+    let public_key = decode!(env, public_key_b64);
+    match VerifierKey::new_ed25519(name, &public_key) {
+        Ok(vkey) => ok_val(env, vkey.encode()),
+        Err(e) => err(env, e),
+    }
+}
+
+#[rustler::nif(schedule = "DirtyCpu")]
+fn nif_note_sign_hybrid<'a>(
+    env: Env<'a>,
+    text: &str,
+    name: &str,
+    secret_key_b64: &str,
+) -> Term<'a> {
+    // ML-DSA path: run on a large-stack thread (see `on_signing_stack`).
+    let signed = on_signing_stack(|| {
+        let sig = note::sign_hybrid(text, name, secret_key_b64).map_err(|e| e.to_string())?;
+        let note = SignedNote::new(text.to_string(), vec![sig]).map_err(|e| e.to_string())?;
+        Ok(note.marshal())
+    });
+    match signed {
+        Ok(text) => ok_val(env, text),
+        Err(e) => err(env, e),
+    }
+}
+
+#[rustler::nif(schedule = "DirtyCpu")]
+fn nif_note_sign_ed25519<'a>(env: Env<'a>, text: &str, name: &str, seed_b64: &str) -> Term<'a> {
+    let seed = decode!(env, seed_b64);
+    let sig = match note::sign_ed25519(text, name, &seed) {
+        Ok(s) => s,
+        Err(e) => return err(env, e),
+    };
+    match SignedNote::new(text.to_string(), vec![sig]) {
+        Ok(n) => ok_val(env, n.marshal()),
+        Err(e) => err(env, e),
+    }
+}
+
+#[rustler::nif(schedule = "DirtyCpu")]
+fn nif_checkpoint_sign_hybrid<'a>(
+    env: Env<'a>,
+    origin: &str,
+    size: u64,
+    root_b64: &str,
+    name: &str,
+    secret_key_b64: &str,
+) -> Term<'a> {
+    // ML-DSA path: run on a large-stack thread (see `on_signing_stack`).
+    let signed = on_signing_stack(|| {
+        checkpoint::sign_checkpoint_hybrid(origin, size, root_b64, name, secret_key_b64)
+            .map_err(|e| e.to_string())
+    });
+    match signed {
+        Ok(note_text) => ok_val(env, note_text),
+        Err(e) => err(env, e),
+    }
+}
+
 // ─── CONIKS (Key Transparency) ───────────────────────────────────────────────
 
 #[rustler::nif(schedule = "DirtyCpu")]
@@ -483,6 +591,49 @@ fn commitment_hash_from_str(s: &str) -> Option<CommitmentHash> {
     }
 }
 
+fn security_level_from_str(s: &str) -> Option<SecurityLevel> {
+    match s {
+        "cat3" => Some(SecurityLevel::Cat3),
+        "cat5" => Some(SecurityLevel::Cat5),
+        _ => None,
+    }
+}
+
+fn checkpoint_suite_from_str(s: &str) -> Option<CheckpointSuite> {
+    match s {
+        "hybrid" => Some(CheckpointSuite::Hybrid),
+        "hybrid_matched" => Some(CheckpointSuite::HybridMatched),
+        "pure_cnsa2" => Some(CheckpointSuite::PureCnsa2),
+        _ => None,
+    }
+}
+
+fn vrf_mode_from_str(s: &str) -> Option<VrfMode> {
+    match s {
+        "classical" => Some(VrfMode::Classical),
+        "hybrid_output" => Some(VrfMode::HybridOutput),
+        "pure_pq_experimental" => Some(VrfMode::PurePqExperimental),
+        _ => None,
+    }
+}
+
+fn directory_mode_from_str(s: &str) -> Option<DirectoryMode> {
+    match s {
+        "coniks" => Some(DirectoryMode::Coniks),
+        "keytrans" => Some(DirectoryMode::Keytrans),
+        _ => None,
+    }
+}
+
+fn keytrans_suite_from_str(s: &str) -> Option<KeytransSuite> {
+    match s {
+        "metamorphic_hybrid_exp" => Some(KeytransSuite::MetamorphicHybridExp),
+        "kt128_sha256_p256" => Some(KeytransSuite::Kt128Sha256P256),
+        "kt128_sha256_ed25519" => Some(KeytransSuite::Kt128Sha256Ed25519),
+        _ => None,
+    }
+}
+
 fn vrf_mode_str(mode: VrfMode) -> &'static str {
     match mode {
         VrfMode::Classical => "classical",
@@ -546,6 +697,115 @@ fn nif_signed_policy_verify<'a>(env: Env<'a>, signed_b64: &str) -> Term<'a> {
         ),
     );
     ok_val(env, fields)
+}
+
+/// Sign a namespace policy with a hybrid composite secret key, returning the
+/// canonical `SignedPolicy` envelope as base64. Mirrors the posture surface of
+/// `nif_signed_policy_verify` (canonical string tags), choosing the CONIKS or
+/// KEYTRANS constructor from `directory_mode`. `prev_policy_hash_b64` is the
+/// base64 64-byte previous-version hash, or `None` for a genesis policy.
+#[rustler::nif(schedule = "DirtyCpu")]
+#[allow(clippy::too_many_arguments)]
+fn nif_signed_policy_sign<'a>(
+    env: Env<'a>,
+    namespace: &str,
+    policy_schema_version: u32,
+    security_level: &str,
+    checkpoint_suite: &str,
+    commitment_hash: &str,
+    vrf_mode: &str,
+    directory_mode: &str,
+    keytrans_suite: &str,
+    effective_from: u64,
+    created_at: u64,
+    prev_policy_hash_b64: Option<String>,
+    secret_key_b64: &str,
+) -> Term<'a> {
+    let ns = match Namespace::parse(namespace) {
+        Ok(n) => n,
+        Err(e) => return err(env, e),
+    };
+    let level = match security_level_from_str(security_level) {
+        Some(l) => l,
+        None => return err(env, format!("unknown security level: {security_level}")),
+    };
+    let cp_suite = match checkpoint_suite_from_str(checkpoint_suite) {
+        Some(s) => s,
+        None => return err(env, format!("unknown checkpoint suite: {checkpoint_suite}")),
+    };
+    let commit = match commitment_hash_from_str(commitment_hash) {
+        Some(c) => c,
+        None => return err(env, format!("unknown commitment hash: {commitment_hash}")),
+    };
+    let vrf = match vrf_mode_from_str(vrf_mode) {
+        Some(v) => v,
+        None => return err(env, format!("unknown vrf mode: {vrf_mode}")),
+    };
+    let dir = match directory_mode_from_str(directory_mode) {
+        Some(d) => d,
+        None => return err(env, format!("unknown directory mode: {directory_mode}")),
+    };
+    let prev_hash = match prev_policy_hash_b64 {
+        Some(ref s) if !s.is_empty() => {
+            let bytes = decode!(env, s);
+            match <[u8; 64]>::try_from(bytes.as_slice()) {
+                Ok(arr) => Some(arr),
+                Err(_) => {
+                    return err(
+                        env,
+                        format!("prev_policy_hash must be 64 bytes, got {}", bytes.len()),
+                    );
+                }
+            }
+        }
+        _ => None,
+    };
+
+    let policy = match dir {
+        DirectoryMode::Coniks => NamespacePolicy::new(
+            ns,
+            policy_schema_version,
+            level,
+            cp_suite,
+            commit,
+            vrf,
+            effective_from,
+            created_at,
+            prev_hash,
+        ),
+        DirectoryMode::Keytrans => {
+            let kt_suite = match keytrans_suite_from_str(keytrans_suite) {
+                Some(k) => k,
+                None => return err(env, format!("unknown keytrans suite: {keytrans_suite}")),
+            };
+            NamespacePolicy::new_keytrans(
+                ns,
+                policy_schema_version,
+                level,
+                cp_suite,
+                commit,
+                vrf,
+                effective_from,
+                created_at,
+                prev_hash,
+                kt_suite,
+            )
+        }
+    };
+    let policy = match policy {
+        Ok(p) => p,
+        Err(e) => return err(env, e),
+    };
+    // ML-DSA path: run on a large-stack thread (see `on_signing_stack`).
+    let signed = on_signing_stack(move || {
+        SignedPolicy::sign(policy, secret_key_b64)
+            .map(|s| b64::encode(&s.canonical_bytes()))
+            .map_err(|e| e.to_string())
+    });
+    match signed {
+        Ok(encoded) => ok_val(env, encoded),
+        Err(e) => err(env, e),
+    }
 }
 
 #[rustler::nif(schedule = "DirtyCpu")]

@@ -24,6 +24,9 @@ byte-for-byte identical to 0.1.5.
   `nif_checkpoint_sign_hybrid`, `nif_signed_policy_sign`) still run ML-DSA off
   the dirty scheduler on an ample stack, so callers need no `+sssdcpu` tuning.
   `#![forbid(unsafe_code)]` is retained.
+- Bump the `:test`-only `metamorphic_crypto` Hex dependency `~> 0.8.1` → `~> 0.8.2`
+  so the test suite (including the SIGBUS regression) resolves against the
+  hardened NIF release.
 
 ## [0.1.5]
 

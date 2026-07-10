@@ -36,7 +36,7 @@ defmodule MetamorphicLog.MixProject do
     [
       {:rustler, "~> 0.38.0", runtime: false},
       {:rustler_precompiled, "~> 0.8"},
-      {:metamorphic_crypto, "~> 0.8.1", only: :test},
+      {:metamorphic_crypto, "~> 0.8.2", only: :test},
       {:ex_doc, "~> 0.34", only: :dev, runtime: false}
     ]
   end

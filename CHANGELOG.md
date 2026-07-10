@@ -4,6 +4,30 @@ All notable changes to `metamorphic_log` are documented here. The format is
 based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.6]
+
+Supply-chain bump propagating the upstream ML-DSA signing-stack hardening down
+to the primitives layer. No public API, wire-format, or behavioural changes —
+every proof, CONIKS, KEYTRANS, commitment, ingestion, and signing path is
+byte-for-byte identical to 0.1.5.
+
+### Changed
+
+- Bump the native `metamorphic-log` core dependency 0.1.9 → 0.1.10 and
+  `metamorphic-crypto` 0.10.2 → 0.10.5, pulling in the shared native signing
+  guard and the 8 MiB WASM shadow-stack linker bump at the source.
+- **Dedupe the signing-stack guard.** The locally open-coded `on_signing_stack`
+  helper in the NIF is replaced by the shared, audited generic
+  `metamorphic_crypto::on_signing_stack`, which the crypto core now exports (a
+  32 MiB scoped worker thread that joins and resumes any unwind). Behaviour is
+  unchanged — the hybrid signing NIFs (`nif_note_sign_hybrid`,
+  `nif_checkpoint_sign_hybrid`, `nif_signed_policy_sign`) still run ML-DSA off
+  the dirty scheduler on an ample stack, so callers need no `+sssdcpu` tuning.
+  `#![forbid(unsafe_code)]` is retained.
+- Bump the `:test`-only `metamorphic_crypto` Hex dependency `~> 0.8.1` → `~> 0.8.2`
+  so the test suite (including the SIGBUS regression) resolves against the
+  hardened NIF release.
+
 ## [0.1.5]
 
 Adds the **signing (producer) surface** to complement the existing verification

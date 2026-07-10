@@ -31,7 +31,7 @@
 //! dedup digests, parsing, flush geometry) stay on normal schedulers.
 #![forbid(unsafe_code)]
 
-use metamorphic_crypto::b64;
+use metamorphic_crypto::{b64, on_signing_stack};
 use metamorphic_log::{
     anchor::{self, AnchorCommitment, AnchorLink, AnchorRecord, Medium},
     checkpoint::{self, Checkpoint},
@@ -97,37 +97,6 @@ macro_rules! decode_array {
             }
         }
     }};
-}
-
-/// Run a signing closure on a dedicated thread with an ample stack.
-///
-/// ML-DSA signing allocates large intermediate lattice matrices on the stack
-/// (the hedged rejection-sampling path expands and buffers several polynomial
-/// vectors). That working set overflows the BEAM dirty-CPU scheduler thread's
-/// modest default stack (`+sssdcpu`, ~320 KB), which faults the guard page and
-/// takes the whole VM down with SIGBUS. Ed25519 signing and every verification
-/// path stay well within the default and are unaffected.
-///
-/// Rather than push a `+sssdcpu` requirement onto every consumer's `vm.args`,
-/// we own the guarantee here: the actual sign runs on a scoped thread with a
-/// generous stack (comfortably covering ML-DSA-87 at Cat-5), and the dirty
-/// scheduler thread blocks on the join — exactly the kind of bounded, blocking
-/// work dirty schedulers exist for. The closure returns owned, `Send` values
-/// (`Result<String, String>`); Rustler term construction stays on the caller.
-fn on_signing_stack<F>(f: F) -> Result<String, String>
-where
-    F: FnOnce() -> Result<String, String> + Send,
-{
-    // 32 MiB: only touched pages are committed, so the reservation is cheap.
-    const SIGNING_STACK_BYTES: usize = 32 * 1024 * 1024;
-    std::thread::scope(|scope| {
-        std::thread::Builder::new()
-            .stack_size(SIGNING_STACK_BYTES)
-            .spawn_scoped(scope, f)
-            .map_err(|e| format!("failed to spawn signing thread: {e}"))?
-            .join()
-            .map_err(|_| "signing thread panicked".to_string())?
-    })
 }
 
 /// Decode a list of base64 proof nodes into `Vec<Vec<u8>>`.
@@ -440,7 +409,7 @@ fn nif_note_sign_hybrid<'a>(
     secret_key_b64: &str,
 ) -> Term<'a> {
     // ML-DSA path: run on a large-stack thread (see `on_signing_stack`).
-    let signed = on_signing_stack(|| {
+    let signed = on_signing_stack(|| -> Result<String, String> {
         let sig = note::sign_hybrid(text, name, secret_key_b64).map_err(|e| e.to_string())?;
         let note = SignedNote::new(text.to_string(), vec![sig]).map_err(|e| e.to_string())?;
         Ok(note.marshal())

@@ -109,6 +109,12 @@ defmodule MetamorphicLog.Native do
   # Namespace policy
   def nif_signed_policy_verify(_signed_b64), do: :erlang.nif_error(:nif_not_loaded)
 
+  # Arity mirrors the Rust `#[rustler::nif]` FFI boundary one-to-one; the
+  # ergonomic public surface is `MetamorphicLog.Policy.sign/2`, which takes a
+  # keyword list. Grouping these into a struct would only move the fan-out into
+  # a NIF decoder without improving the caller, so the arity check is waived for
+  # this private, `@moduledoc false` binding stub.
+  # credo:disable-for-next-line Credo.Check.Refactor.FunctionArity
   def nif_signed_policy_sign(
         _namespace,
         _policy_schema_version,

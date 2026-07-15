@@ -47,6 +47,17 @@ defmodule MetamorphicLog.Native do
       ),
       do: :erlang.nif_error(:nif_not_loaded)
 
+  def nif_key_history_entry_hash_with_context(
+        _context,
+        _seq,
+        _ts_ms,
+        _enc_x25519_b64,
+        _enc_pq_b64,
+        _signing_pub_b64,
+        _prev_entry_hash_b64
+      ),
+      do: :erlang.nif_error(:nif_not_loaded)
+
   def nif_key_history_v1_rfc6962_leaf_hash(
         _seq,
         _ts_ms,

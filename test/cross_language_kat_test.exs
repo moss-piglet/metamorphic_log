@@ -68,6 +68,58 @@ defmodule MetamorphicLog.CrossLanguageKatTest do
     end
   end
 
+  describe "Layer-0 canonical leaf: context-parameterized (branded) entry hash" do
+    test "mosslet label reproduces the frozen genesis entry hash byte-for-byte" do
+      assert {:ok, hash} =
+               Leaf.key_history_entry_hash_with_context(
+                 "mosslet/key-history/v1",
+                 V.genesis_entry()
+               )
+
+      assert hash == V.kat_genesis_hash_b64()
+    end
+
+    test "a different namespace label yields a different entry hash" do
+      assert {:ok, mosslet} =
+               Leaf.key_history_entry_hash_with_context(
+                 "mosslet/key-history/v1",
+                 V.genesis_entry()
+               )
+
+      assert {:ok, mosskeys} =
+               Leaf.key_history_entry_hash_with_context(
+                 "mosskeys/key-history/v1",
+                 V.genesis_entry()
+               )
+
+      assert mosskeys != mosslet
+      assert mosskeys != V.kat_genesis_hash_b64()
+    end
+
+    test "canonical bytes and RFC 6962 leaf hash are brand-independent" do
+      # The label only feeds the intra-chain entry hash; the canonical encoding
+      # and the Merkle leaf hash are computed without it, so both are identical
+      # regardless of which namespace brands the chain.
+      assert {:ok, canon} = Leaf.key_history_v1_canonical_bytes(V.genesis_entry())
+      assert byte_size(Base.decode64!(canon)) == V.kat_genesis_canon_size()
+
+      assert {:ok, leaf} = Leaf.key_history_v1_rfc6962_leaf_hash(V.genesis_entry())
+      assert Base.decode64!(leaf) == V.hex(V.kat_genesis_rfc6962_leaf_hex())
+    end
+
+    test "bang form matches the reference vector" do
+      assert Leaf.key_history_entry_hash_with_context!(
+               "mosslet/key-history/v1",
+               V.genesis_entry()
+             ) == V.kat_genesis_hash_b64()
+    end
+
+    test "a malformed context label returns an error" do
+      assert {:error, _} =
+               Leaf.key_history_entry_hash_with_context("missing-version", V.genesis_entry())
+    end
+  end
+
   describe "Checkpoint / signed-note: classical + additive hybrid-PQ (verify-locked)" do
     test "verify_signed_note accepts the hybrid KAT note" do
       assert {:ok, 1} = Note.verify(V.hybrid_kat_note(), [V.hybrid_kat_vkey()])

@@ -4,6 +4,33 @@ All notable changes to `metamorphic_log` are documented here. The format is
 based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.7]
+
+Adds a **context-parameterized key-history entry hash**, so any application can
+produce a branded transparency-log leaf (for example `mosskeys/key-history/v1`)
+through the audited byte discipline instead of inheriting the reference
+`mosslet/key-history/v1` instance or hand-rolling the hash. Additive — the
+frozen `mosslet/key-history/v1` vectors are byte-for-byte unchanged, and the
+canonical bytes plus RFC 6962 leaf hash stay brand-independent.
+
+### Added
+
+- `MetamorphicLog.Leaf.key_history_entry_hash_with_context/2` (and its `!`
+  variant) — compute an intra-chain entry hash under your own
+  `<namespace>/<record-type>/v<major>` label. This is now the **recommended**
+  way to compute a key-history `entry_hash`: branding with your own namespace
+  domain-separates your hashes and lets auditors tell whose key history a chain
+  is. Passing `"mosslet/key-history/v1"` reproduces
+  `key_history_v1_entry_hash/1` byte-for-byte; a malformed label returns
+  `{:error, reason}`. Backed by the new `entry_hash_with_context` surface in the
+  native core.
+
+### Changed
+
+- Bump the native `metamorphic-log` core dependency 0.1.10 → 0.1.11, which
+  exposes the context-parameterized key-history entry point across all bindings.
+  The `key_history_v1_*` functions and their KATs are unchanged.
+
 ## [0.1.6]
 
 Supply-chain bump propagating the upstream ML-DSA signing-stack hardening down

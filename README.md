@@ -37,8 +37,10 @@ recomputed and verified, unchanged, on the server.
   mode, plus the CONIKS-vs-KEYTRANS directory route and its suite) verification
   and **declared == observed** enforcement, including the directory backend
   (`MetamorphicLog.Policy`).
-- **Canonical leaves** — the `mosslet/key-history/v1` canonical encoding and
-  hashes (`MetamorphicLog.Leaf`).
+- **Canonical leaves** — key-history canonical encoding and hashes
+  (`MetamorphicLog.Leaf`). Brand your own chain with a
+  `<namespace>/key-history/v1` label via `key_history_entry_hash_with_context/2`
+  (recommended); `mosslet/key-history/v1` is the frozen reference instance.
 - **Ingestion primitives** — content dedup keys, tile flush geometry, and
   Merkle recomputation for an Elixir operator pipeline
   (`MetamorphicLog.Ingest`).

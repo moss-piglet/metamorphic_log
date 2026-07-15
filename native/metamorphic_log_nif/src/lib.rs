@@ -40,7 +40,7 @@ use metamorphic_log::{
     directory::{DirectoryBackendId, SearchOutcome},
     ingest::{self, DedupKey},
     keytrans::{KeytransVerifier, KtSuite},
-    leaf::key_history_v1,
+    leaf::{ContextLabel, key_history_v1},
     note::{self, SignedNote, VerifierKey},
     policy::{
         CheckpointSuite, CommitmentHash, DirectoryMode, KeytransSuite, NamespacePolicy,
@@ -152,7 +152,7 @@ fn nif_verify_consistency<'a>(
     }
 }
 
-// ─── Canonical Leaf (mosslet/key-history/v1 conformance instance) ─────────────
+// ─── Canonical Leaf (key-history: frozen mosslet + branded context) ──────────
 
 fn build_key_history_entry<'a>(
     env: Env<'a>,
@@ -228,6 +228,50 @@ fn nif_key_history_v1_entry_hash<'a>(
         Err(t) => return t,
     };
     match entry.entry_hash() {
+        Ok(hash) => ok_val(env, b64::encode(&hash)),
+        Err(e) => err(env, e),
+    }
+}
+
+/// Context-parameterized intra-chain entry hash: the branded, application-owned
+/// counterpart to `nif_key_history_v1_entry_hash`.
+///
+/// `context` is a `<namespace>/<record-type>/v<N>` label (e.g.
+/// `"mosskeys/key-history/v1"`), validated via `ContextLabel::parse`; a
+/// malformed label returns `{:error, reason}`. Everything else is identical to
+/// the frozen `mosslet/key-history/v1` path: passing that exact label
+/// reproduces `nif_key_history_v1_entry_hash` byte-for-byte, while any other
+/// label yields a different digest over the *same* canonical bytes and RFC 6962
+/// leaf hash (both brand-independent).
+#[rustler::nif]
+#[allow(clippy::too_many_arguments)]
+fn nif_key_history_entry_hash_with_context<'a>(
+    env: Env<'a>,
+    context: &str,
+    seq: u64,
+    ts_ms: u64,
+    enc_x25519_b64: &str,
+    enc_pq_b64: &str,
+    signing_pub_b64: &str,
+    prev_entry_hash_b64: Option<String>,
+) -> Term<'a> {
+    let label = match ContextLabel::parse(context) {
+        Ok(l) => l,
+        Err(e) => return err(env, e),
+    };
+    let entry = match build_key_history_entry(
+        env,
+        seq,
+        ts_ms,
+        enc_x25519_b64,
+        enc_pq_b64,
+        signing_pub_b64,
+        prev_entry_hash_b64,
+    ) {
+        Ok(e) => e,
+        Err(t) => return t,
+    };
+    match entry.entry_hash_with_context(&label) {
         Ok(hash) => ok_val(env, b64::encode(&hash)),
         Err(e) => err(env, e),
     }

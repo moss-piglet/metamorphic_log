@@ -1,6 +1,6 @@
 [package]
 name = "metamorphic_log_nif"
-version = "0.1.7"
+version = "0.1.8"
 edition = "2024"
 rust-version = "1.91"
 publish = false
@@ -12,7 +12,22 @@ crate-type = ["cdylib"]
 
 [dependencies]
 rustler = "0.38"
-metamorphic-log = "0.1.11"
+# 0.2 first exposes the `Send + Sync` bound on `vrf::Vrf`, which lets the
+# `ConiksDirectory` / `KeytransDirectory` (each holding a `Box<dyn Vrf>`) be
+# owned by a BEAM resource (`Resource: Send + Sync + 'static`) for the stateful
+# server-side directory construction surface. 0.2.1 adds the incremental CONIKS
+# tree-hash cache (O(1) amortized root, ~O(depth) lookup; byte-identical proofs).
+metamorphic-log = "0.2.1"
 # Single source of truth for base64 (same impl used by the engine + WASM SDK),
 # so the wire encoding is byte-identical across Rust core / WASM / this NIF.
 metamorphic-crypto = "0.10.5"
+
+# --- Local co-development override (commented out by default) ---
+# Uncomment to build against the unreleased sibling metamorphic-log working tree
+# instead of the published crate. Leave commented in committed code so CI, the
+# release pipeline, and downstream consumers resolve the published version from
+# crates.io.
+#
+# [patch.crates-io]
+# metamorphic-log = { path = "../../../metamorphic-log" }
+

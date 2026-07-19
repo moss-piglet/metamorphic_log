@@ -168,4 +168,113 @@ defmodule MetamorphicLog.Keytrans do
       proof_b64
     )
   end
+
+  # ─── Directory construction (operator / prover side) ────────────────────────
+
+  @typedoc """
+  An opaque, stateful KEYTRANS directory resource owned by the runtime.
+
+  Held as a reference to a Rust-side `RwLock<KeytransDirectory>`: reads
+  (`combined_root/1`, `prove_search/2`, `directory_vrf_public/1`) run
+  concurrently, appends (`update/5`) are serialized. It maintains the single
+  logical prefix tree and the chronological combined tree — built once with
+  `directory_open/3` and grown incrementally with `update/5`, rather than
+  rebuilt per request. Not serializable; do not persist it. Persist the VRF
+  secret (see `generate_vrf_key/1`) and replay versions to rebuild.
+
+  **Experimental**: the KEYTRANS wire is movable and not byte-frozen. `#45`
+  serving launches CONIKS-only; this surface backs the follow-up path.
+  """
+  @opaque directory :: reference()
+
+  @doc """
+  Generate a fresh VRF keypair for `suite`.
+
+  Returns `{:ok, {secret_b64, public_b64}}`. The `secret_b64` is per-namespace
+  **operator infrastructure** — persist it securely and pass it to
+  `directory_open/3`; it is not user key material and not a signing key. The
+  `public_b64` is published so relying parties can verify proofs.
+  """
+  @spec generate_vrf_key(suite()) :: {:ok, {String.t(), String.t()}} | {:error, String.t()}
+  def generate_vrf_key(suite) when is_map_key(@suite_ids, suite) do
+    Native.nif_keytrans_generate_vrf_key(suite_id(suite))
+  end
+
+  @doc """
+  Open a per-namespace directory on `suite` from an existing VRF secret key,
+  committing values under `context`, returning an opaque, empty `t:directory/0`
+  resource.
+
+  Replay the namespace's versions into it with `update/5` to reconstruct the
+  current directory. Returns `{:ok, directory}` or `{:error, reason}` (an unknown
+  suite or a structurally invalid secret key).
+  """
+  @spec directory_open(suite(), context :: String.t(), vrf_secret_b64 :: String.t()) ::
+          {:ok, directory()} | {:error, String.t()}
+  def directory_open(suite, context, vrf_secret_b64)
+      when is_map_key(@suite_ids, suite) and is_binary(context) and is_binary(vrf_secret_b64) do
+    Native.nif_keytrans_directory_open(suite_id(suite), context, vrf_secret_b64)
+  end
+
+  @doc """
+  Append a new version of `label` with `value`, published at `timestamp`
+  (milliseconds since the Unix epoch) and blinded by `opening` — the suite's
+  `Nc`-byte commitment opening, which the operator supplies from a CSPRNG.
+  Serialized against other appends.
+
+  Returns `{:ok, version}` with the new zero-based version number, or
+  `{:error, reason}` (a wrong opening length, VRF failure, or oversized
+  commitment inputs).
+  """
+  @spec update(
+          directory(),
+          label_b64 :: String.t(),
+          value_b64 :: String.t(),
+          timestamp :: non_neg_integer(),
+          opening_b64 :: String.t()
+        ) :: {:ok, non_neg_integer()} | {:error, String.t()}
+  def update(directory, label_b64, value_b64, timestamp, opening_b64)
+      when is_reference(directory) and is_binary(label_b64) and is_binary(value_b64) and
+             is_integer(timestamp) and timestamp >= 0 and is_binary(opening_b64) do
+    Native.nif_keytrans_directory_update(directory, label_b64, value_b64, timestamp, opening_b64)
+  end
+
+  @doc """
+  The current combined-tree root (the published directory root), base64-encoded.
+
+  Returns `{:ok, root_b64}` or `{:error, reason}` (an empty directory has no
+  root).
+  """
+  @spec combined_root(directory()) :: {:ok, String.t()} | {:error, String.t()}
+  def combined_root(directory) when is_reference(directory) do
+    Native.nif_keytrans_directory_combined_root(directory)
+  end
+
+  @doc """
+  Produce a **greatest-version search** proof for `label` against the current log
+  head.
+
+  Returns `{:ok, {:present, value_b64, proof_b64}}` when the label has a value,
+  `{:ok, {:absent, proof_b64}}` when it does not, or `{:error, reason}` (an empty
+  directory or VRF failure). The returned `proof_b64` verifies via
+  `verify_search/6` against the published `directory_vrf_public/1` key and
+  `combined_root/1`.
+  """
+  @spec prove_search(directory(), label_b64 :: String.t()) ::
+          {:ok, {:present, String.t(), String.t()}}
+          | {:ok, {:absent, String.t()}}
+          | {:error, String.t()}
+  def prove_search(directory, label_b64)
+      when is_reference(directory) and is_binary(label_b64) do
+    Native.nif_keytrans_directory_prove_search(directory, label_b64)
+  end
+
+  @doc """
+  The VRF public key (base64) relying parties use to verify this directory's
+  proofs. Returns `{:ok, vrf_public_b64}`.
+  """
+  @spec directory_vrf_public(directory()) :: {:ok, String.t()} | {:error, String.t()}
+  def directory_vrf_public(directory) when is_reference(directory) do
+    Native.nif_keytrans_directory_vrf_public(directory)
+  end
 end

@@ -31,15 +31,17 @@
 //! dedup digests, parsing, flush geometry) stay on normal schedulers.
 #![forbid(unsafe_code)]
 
+use std::sync::RwLock;
+
 use metamorphic_crypto::{b64, on_signing_stack};
 use metamorphic_log::{
     anchor::{self, AnchorCommitment, AnchorLink, AnchorRecord, Medium},
     checkpoint::{self, Checkpoint},
     commitment::{self, Commitment, Opening},
-    coniks::{self, AbsenceProof, LookupProof, Namespace},
+    coniks::{self, AbsenceProof, ConiksDirectory, LookupProof, LookupResult, Namespace},
     directory::{DirectoryBackendId, SearchOutcome},
     ingest::{self, DedupKey},
-    keytrans::{KeytransVerifier, KtSuite},
+    keytrans::{KeytransDirectory, KeytransVerifier, KtSuite},
     leaf::{ContextLabel, key_history_v1},
     note::{self, SignedNote, VerifierKey},
     policy::{
@@ -48,9 +50,9 @@ use metamorphic_log::{
     },
     tile::{self, Tile},
     verify_consistency, verify_inclusion,
-    vrf::{Ecvrf, VrfPublicKey},
+    vrf::{Ecvrf, Vrf, VrfPublicKey, VrfSecretKey},
 };
-use rustler::{Encoder, Env, Term};
+use rustler::{Encoder, Env, Resource, ResourceArc, Term};
 
 mod atoms {
     rustler::atoms! { ok, error, present, absent }
@@ -553,6 +555,140 @@ fn nif_coniks_verify_absence<'a>(
     }
 }
 
+// ─── CONIKS directory construction (operator / prover side) ──────────────────
+//
+// The producer counterpart to the CONIKS verifiers above. A directory is
+// derived from the append-only log but read on every lookup, so it is held as a
+// stateful BEAM resource (Option B): built once from the per-namespace VRF
+// secret, mutated on append under a write lock, and served concurrently under a
+// read lock. All construction logic lives in the audited core; this layer only
+// owns the `RwLock`, marshals base64/UTF-8, and picks classical `Ecvrf` (suite
+// 0x03, the `NamespacePolicy` default). The VRF secret is per-namespace operator
+// infrastructure (not user key material and not a signing key); it crosses the
+// boundary once at open time and is never returned or logged.
+
+/// A stateful, per-namespace CONIKS directory owned by the BEAM as an opaque
+/// resource. Reads (`root`, `lookup`, `vrf_public`) take the read lock and run
+/// concurrently; appends (`insert`) take the write lock.
+struct ConiksDir {
+    inner: RwLock<ConiksDirectory>,
+}
+
+#[rustler::resource_impl]
+impl Resource for ConiksDir {}
+
+/// Generate a fresh classical (Ecvrf, suite 0x03) VRF keypair for a namespace
+/// directory. Returns `{:ok, {secret_b64, public_b64}}`; the operator persists
+/// the secret as per-namespace infrastructure and publishes the public half.
+#[rustler::nif(schedule = "DirtyCpu")]
+fn nif_coniks_generate_vrf_key(env: Env<'_>) -> Term<'_> {
+    let (secret, public) = Ecvrf.generate_keypair();
+    ok_val(
+        env,
+        (
+            b64::encode(secret.as_bytes()),
+            b64::encode(public.as_bytes()),
+        ),
+    )
+}
+
+/// Open a per-namespace directory from an existing VRF secret key (classical
+/// Ecvrf, suite 0x03), returning it as an opaque resource. The directory starts
+/// empty; the caller replays the namespace's entries with
+/// `nif_coniks_directory_insert`. Returns `{:ok, resource}` or `{:error,
+/// reason}` (malformed namespace or structurally invalid secret key).
+#[rustler::nif(schedule = "DirtyCpu")]
+fn nif_coniks_directory_open<'a>(env: Env<'a>, namespace: &str, vrf_secret_b64: &str) -> Term<'a> {
+    let ns = match Namespace::parse(namespace) {
+        Ok(n) => n,
+        Err(e) => return err(env, e),
+    };
+    let secret = VrfSecretKey::from_bytes(decode!(env, vrf_secret_b64));
+    match ConiksDirectory::from_secret_key(ns, Box::new(Ecvrf), secret) {
+        Ok(dir) => ok_val(
+            env,
+            ResourceArc::new(ConiksDir {
+                inner: RwLock::new(dir),
+            }),
+        ),
+        Err(e) => err(env, e),
+    }
+}
+
+/// Insert (or replace) `identity`'s `value` in the directory, committing to it
+/// at the identity's VRF-derived index. Takes the write lock. Returns `:ok` or
+/// `{:error, reason}`.
+#[rustler::nif(schedule = "DirtyCpu")]
+fn nif_coniks_directory_insert<'a>(
+    env: Env<'a>,
+    dir: ResourceArc<ConiksDir>,
+    identity_b64: &str,
+    value_b64: &str,
+) -> Term<'a> {
+    let identity = decode!(env, identity_b64);
+    let value = decode!(env, value_b64);
+    let mut guard = match dir.inner.write() {
+        Ok(g) => g,
+        Err(_) => return err(env, "coniks directory lock poisoned"),
+    };
+    match guard.insert(&identity, &value) {
+        Ok(()) => ok(env),
+        Err(e) => err(env, e),
+    }
+}
+
+/// The current directory root (64-byte SHA3-512 prefix-tree root). Takes the
+/// read lock. Returns `{:ok, root_b64}`.
+#[rustler::nif(schedule = "DirtyCpu")]
+fn nif_coniks_directory_root<'a>(env: Env<'a>, dir: ResourceArc<ConiksDir>) -> Term<'a> {
+    let guard = match dir.inner.read() {
+        Ok(g) => g,
+        Err(_) => return err(env, "coniks directory lock poisoned"),
+    };
+    ok_val(env, b64::encode(&guard.root()))
+}
+
+/// Look up `identity`, returning a presence or absence proof against the current
+/// root. Takes the read lock. Returns `{:ok, {:present, value_b64, proof_b64}}`,
+/// `{:ok, {:absent, proof_b64}}`, or `{:error, reason}`.
+#[rustler::nif(schedule = "DirtyCpu")]
+fn nif_coniks_directory_lookup<'a>(
+    env: Env<'a>,
+    dir: ResourceArc<ConiksDir>,
+    identity_b64: &str,
+) -> Term<'a> {
+    let identity = decode!(env, identity_b64);
+    let guard = match dir.inner.read() {
+        Ok(g) => g,
+        Err(_) => return err(env, "coniks directory lock poisoned"),
+    };
+    match guard.lookup(&identity) {
+        Ok(LookupResult::Present(proof)) => ok_val(
+            env,
+            (
+                atoms::present(),
+                b64::encode(proof.value()),
+                b64::encode(&proof.to_bytes()),
+            ),
+        ),
+        Ok(LookupResult::Absent(proof)) => {
+            ok_val(env, (atoms::absent(), b64::encode(&proof.to_bytes())))
+        }
+        Err(e) => err(env, e),
+    }
+}
+
+/// The VRF public key relying parties use to verify this directory's proofs.
+/// Takes the read lock. Returns `{:ok, vrf_public_b64}`.
+#[rustler::nif(schedule = "DirtyCpu")]
+fn nif_coniks_directory_vrf_public<'a>(env: Env<'a>, dir: ResourceArc<ConiksDir>) -> Term<'a> {
+    let guard = match dir.inner.read() {
+        Ok(g) => g,
+        Err(_) => return err(env, "coniks directory lock poisoned"),
+    };
+    ok_val(env, b64::encode(guard.vrf_public_key().as_bytes()))
+}
+
 // ─── Commitments (SHA3-512) ──────────────────────────────────────────────────
 
 #[rustler::nif]
@@ -1035,6 +1171,184 @@ fn nif_keytrans_verify_monitor<'a>(
         Ok(verified) => ok_val(env, verified),
         Err(e) => err(env, e),
     }
+}
+
+// ─── KEYTRANS directory construction (operator / prover side) — Slice 9 ───────
+//
+// The producer counterpart to the KEYTRANS verifiers above, and the sibling of
+// the CONIKS construction resource. A `KeytransDirectory` maintains the single
+// logical prefix tree and the chronological combined tree, appending a new
+// version each `update`, so — like CONIKS — it is held as a stateful BEAM
+// resource (Option B): built once from the per-namespace VRF secret, mutated on
+// append under a write lock, and served concurrently under a read lock. All
+// construction logic lives in the audited core; this layer only owns the
+// `RwLock` and marshals base64/UTF-8.
+//
+// EXPERIMENTAL: the KEYTRANS wire (`draft-ietf-keytrans-protocol-04`) is movable
+// and NOT byte-frozen. `#45` serving launches CONIKS-only and flags KEYTRANS as
+// unavailable; this surface exists for the follow-up path, not launch.
+//
+// Suite-aware throughout: the caller maps the §15.1 `suite_id` u16 to a
+// `KtSuite` (`KtSuite::from_suite_id`), from which we take the matching VRF
+// (`suite.vrf()`); nothing defaults to a hardcoded suite. The VRF secret is
+// per-namespace operator infrastructure (not user key material and not a signing
+// key); it crosses the boundary once at open time and is never returned.
+
+/// A stateful, per-namespace KEYTRANS combined-tree directory owned by the BEAM
+/// as an opaque resource. Reads (`combined_root`, `prove_search`, `vrf_public`)
+/// take the read lock and run concurrently; appends (`update`) take the write
+/// lock.
+struct KeytransDir {
+    inner: RwLock<KeytransDirectory>,
+}
+
+#[rustler::resource_impl]
+impl Resource for KeytransDir {}
+
+/// Generate a fresh VRF keypair for the given §15.1 suite. Returns `{:ok,
+/// {secret_b64, public_b64}}`; the operator persists the secret as per-namespace
+/// infrastructure and publishes the public half.
+#[rustler::nif(schedule = "DirtyCpu")]
+fn nif_keytrans_generate_vrf_key(env: Env<'_>, suite_id: u16) -> Term<'_> {
+    let suite = match KtSuite::from_suite_id(suite_id) {
+        Ok(s) => s,
+        Err(e) => return err(env, e),
+    };
+    let (secret, public) = suite.vrf().generate_keypair();
+    ok_val(
+        env,
+        (
+            b64::encode(secret.as_bytes()),
+            b64::encode(public.as_bytes()),
+        ),
+    )
+}
+
+/// Open a per-namespace directory from an existing VRF secret key on an explicit
+/// suite, committing values under `context`, returning it as an opaque resource.
+/// The public key is derived from the secret via the suite's VRF. The directory
+/// starts empty; the caller replays the namespace's versions with
+/// `nif_keytrans_directory_update`. Returns `{:ok, resource}` or `{:error,
+/// reason}` (unknown suite or a structurally invalid secret key).
+#[rustler::nif(schedule = "DirtyCpu")]
+fn nif_keytrans_directory_open<'a>(
+    env: Env<'a>,
+    suite_id: u16,
+    context: &str,
+    vrf_secret_b64: &str,
+) -> Term<'a> {
+    let suite = match KtSuite::from_suite_id(suite_id) {
+        Ok(s) => s,
+        Err(e) => return err(env, e),
+    };
+    let secret = VrfSecretKey::from_bytes(decode!(env, vrf_secret_b64));
+    let public = match suite.vrf().derive_public_key(&secret) {
+        Ok(p) => p,
+        Err(e) => return err(env, e),
+    };
+    let dir = KeytransDirectory::new_with_suite(context, suite, suite.vrf(), secret, public);
+    ok_val(
+        env,
+        ResourceArc::new(KeytransDir {
+            inner: RwLock::new(dir),
+        }),
+    )
+}
+
+/// Append a new version of `label` with `value`, published at `timestamp`
+/// (milliseconds since the Unix epoch) and blinded by `opening` (the suite's
+/// `Nc`-byte commitment opening, supplied by the operator from a CSPRNG). Takes
+/// the write lock. Returns `{:ok, version}` (the new zero-based version number)
+/// or `{:error, reason}` (wrong opening length, VRF failure, or oversized
+/// commitment inputs).
+#[rustler::nif(schedule = "DirtyCpu")]
+fn nif_keytrans_directory_update<'a>(
+    env: Env<'a>,
+    dir: ResourceArc<KeytransDir>,
+    label_b64: &str,
+    value_b64: &str,
+    timestamp: u64,
+    opening_b64: &str,
+) -> Term<'a> {
+    let label = decode!(env, label_b64);
+    let value = decode!(env, value_b64);
+    let opening = decode!(env, opening_b64);
+    let mut guard = match dir.inner.write() {
+        Ok(g) => g,
+        Err(_) => return err(env, "keytrans directory lock poisoned"),
+    };
+    match guard.update(&label, &value, timestamp, &opening) {
+        Ok(version) => ok_val(env, version),
+        Err(e) => err(env, e),
+    }
+}
+
+/// The current combined-tree root (the published directory root). Takes the read
+/// lock. Returns `{:ok, root_b64}` or `{:error, reason}` (an empty directory has
+/// no root).
+#[rustler::nif(schedule = "DirtyCpu")]
+fn nif_keytrans_directory_combined_root<'a>(
+    env: Env<'a>,
+    dir: ResourceArc<KeytransDir>,
+) -> Term<'a> {
+    let guard = match dir.inner.read() {
+        Ok(g) => g,
+        Err(_) => return err(env, "keytrans directory lock poisoned"),
+    };
+    match guard.combined_root() {
+        Ok(root) => ok_val(env, b64::encode(&root)),
+        Err(e) => err(env, e),
+    }
+}
+
+/// Produce a greatest-version search proof for `label` against the current log
+/// head. Takes the read lock. The proof is encoded to the movable
+/// `KEYTRANS_EXP_04` wire blob. Returns `{:ok, {:present, value_b64, proof_b64}}`,
+/// `{:ok, {:absent, proof_b64}}`, or `{:error, reason}` (an empty directory or
+/// VRF failure).
+#[rustler::nif(schedule = "DirtyCpu")]
+fn nif_keytrans_directory_prove_search<'a>(
+    env: Env<'a>,
+    dir: ResourceArc<KeytransDir>,
+    label_b64: &str,
+) -> Term<'a> {
+    let label = decode!(env, label_b64);
+    let guard = match dir.inner.read() {
+        Ok(g) => g,
+        Err(_) => return err(env, "keytrans directory lock poisoned"),
+    };
+    let proof = match guard.prove_search(&label) {
+        Ok(p) => p,
+        Err(e) => return err(env, e),
+    };
+    let bytes = match proof.encode() {
+        Ok(b) => b,
+        Err(e) => return err(env, e),
+    };
+    // Present iff the label has a greatest version whose value is revealed —
+    // the same outcome the object-safe `Directory::search` derives.
+    match (&proof.greatest_version, &proof.revealed) {
+        (Some(_), Some(revealed)) => ok_val(
+            env,
+            (
+                atoms::present(),
+                b64::encode(&revealed.value),
+                b64::encode(&bytes),
+            ),
+        ),
+        _ => ok_val(env, (atoms::absent(), b64::encode(&bytes))),
+    }
+}
+
+/// The VRF public key relying parties use to verify this directory's proofs.
+/// Takes the read lock. Returns `{:ok, vrf_public_b64}`.
+#[rustler::nif(schedule = "DirtyCpu")]
+fn nif_keytrans_directory_vrf_public<'a>(env: Env<'a>, dir: ResourceArc<KeytransDir>) -> Term<'a> {
+    let guard = match dir.inner.read() {
+        Ok(g) => g,
+        Err(_) => return err(env, "keytrans directory lock poisoned"),
+    };
+    ok_val(env, b64::encode(guard.vrf_public().as_bytes()))
 }
 
 // ─── Ingestion Primitives (Slice 7) ──────────────────────────────────────────

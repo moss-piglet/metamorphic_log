@@ -682,9 +682,9 @@ dependencies = [
 
 [[package]]
 name = "metamorphic-log"
-version = "0.1.11"
+version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "80afc64ccd51e84a8d64aee2337c3a27059179a40ce25821d288c2865cfcb5f0"
+checksum = "3235f6350ce0b229be198ca9e7b3068688345fddf3d5b117d0fd0d440f04b9a7"
 dependencies = [
  "getrandom 0.2.17",
  "js-sys",
@@ -695,7 +695,7 @@ dependencies = [
 
 [[package]]
 name = "metamorphic_log_nif"
-version = "0.1.7"
+version = "0.1.8"
 dependencies = [
  "metamorphic-crypto",
  "metamorphic-log",

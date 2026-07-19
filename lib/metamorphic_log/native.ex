@@ -113,6 +113,19 @@ defmodule MetamorphicLog.Native do
       ),
       do: :erlang.nif_error(:nif_not_loaded)
 
+  # CONIKS directory construction (operator / prover side)
+  def nif_coniks_generate_vrf_key, do: :erlang.nif_error(:nif_not_loaded)
+
+  def nif_coniks_directory_open(_namespace, _vrf_secret_b64),
+    do: :erlang.nif_error(:nif_not_loaded)
+
+  def nif_coniks_directory_insert(_dir, _identity_b64, _value_b64),
+    do: :erlang.nif_error(:nif_not_loaded)
+
+  def nif_coniks_directory_root(_dir), do: :erlang.nif_error(:nif_not_loaded)
+  def nif_coniks_directory_lookup(_dir, _identity_b64), do: :erlang.nif_error(:nif_not_loaded)
+  def nif_coniks_directory_vrf_public(_dir), do: :erlang.nif_error(:nif_not_loaded)
+
   # Commitments
   def nif_verify_commitment(_context, _commitment_b64, _value_b64, _opening_b64),
     do: :erlang.nif_error(:nif_not_loaded)
@@ -187,6 +200,22 @@ defmodule MetamorphicLog.Native do
         _proof_b64
       ),
       do: :erlang.nif_error(:nif_not_loaded)
+
+  # KEYTRANS directory construction (operator / prover side) — Slice 9
+  def nif_keytrans_generate_vrf_key(_suite_id), do: :erlang.nif_error(:nif_not_loaded)
+
+  def nif_keytrans_directory_open(_suite_id, _context, _vrf_secret_b64),
+    do: :erlang.nif_error(:nif_not_loaded)
+
+  def nif_keytrans_directory_update(_dir, _label_b64, _value_b64, _timestamp, _opening_b64),
+    do: :erlang.nif_error(:nif_not_loaded)
+
+  def nif_keytrans_directory_combined_root(_dir), do: :erlang.nif_error(:nif_not_loaded)
+
+  def nif_keytrans_directory_prove_search(_dir, _label_b64),
+    do: :erlang.nif_error(:nif_not_loaded)
+
+  def nif_keytrans_directory_vrf_public(_dir), do: :erlang.nif_error(:nif_not_loaded)
 
   # Ingestion primitives
   def nif_dedup_key_from_record(_namespace, _payload_b64),

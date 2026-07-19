@@ -4,6 +4,58 @@ All notable changes to `metamorphic_log` are documented here. The format is
 based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.8]
+
+Adds the **server-side CONIKS directory construction** surface (the operator /
+prover counterpart to the existing verify-only CONIKS APIs), so an operator can
+build a per-namespace directory, append identity→value entries, publish its
+root, and produce presence/absence proofs — all through the audited Rust core.
+Additive; no wire-format or existing-API changes.
+
+### Added
+
+- `MetamorphicLog.Coniks.generate_vrf_key/0` — generate a fresh classical
+  (ECVRF-edwards25519, suite `0x03`) VRF keypair, returning `{:ok, {secret_b64,
+  public_b64}}`. The secret is per-namespace operator infrastructure.
+- `MetamorphicLog.Coniks.directory_open/2` — open an opaque, stateful directory
+  resource from a namespace + VRF secret. The directory is held as a Rust-side
+  `RwLock<ConiksDirectory>`: concurrent reads, serialized appends. Built once
+  and updated incrementally rather than rebuilt per request.
+- `MetamorphicLog.Coniks.insert/3` — insert/replace an identity's committed
+  value at its VRF-derived index (write path).
+- `MetamorphicLog.Coniks.root/1` — the 64-byte SHA3-512 prefix-tree root.
+- `MetamorphicLog.Coniks.lookup/2` — produce a presence
+  (`{:ok, {:present, value_b64, proof_b64}}`) or absence
+  (`{:ok, {:absent, proof_b64}}`) proof against the current root; the proof
+  verifies via the existing `verify_lookup/5` / `verify_absence/5`.
+- `MetamorphicLog.Coniks.vrf_public/1` — the published VRF public key.
+
+### Added (KEYTRANS construction — experimental)
+
+- `MetamorphicLog.Keytrans.generate_vrf_key/1`, `directory_open/3`, `update/5`,
+  `combined_root/1`, `prove_search/2`, and `directory_vrf_public/1` — the
+  operator / prover counterpart to the verify-only KEYTRANS APIs, mirroring the
+  CONIKS construction resource. An operator opens a per-namespace combined-tree
+  directory from a VRF secret on an explicit suite, appends label versions,
+  publishes its combined-tree root, and produces greatest-version search proofs
+  (`{:ok, {:present, value_b64, proof_b64}}` / `{:ok, {:absent, proof_b64}}`)
+  that verify via the existing `verify_search/6`. Held as a Rust-side
+  `RwLock<KeytransDirectory>`: concurrent reads, serialized appends. Suite-aware
+  throughout (the §15.1 `suite_id` selects the VRF, commitment width, and
+  opening length; nothing is hardcoded).
+- **Experimental / movable**: the KEYTRANS wire (`draft-ietf-keytrans-protocol-04`)
+  is not byte-frozen. Directory-lookup serving launches CONIKS-only and flags
+  KEYTRANS as unavailable; this surface backs the follow-up path.
+
+### Changed
+
+- Bump the native `metamorphic-log` core dependency 0.1.11 → 0.2.1. 0.2.0 adds
+  the `Send + Sync` bound on `vrf::Vrf` required to own a `ConiksDirectory` /
+  `KeytransDirectory` (each holding a `Box<dyn Vrf>`) inside a BEAM resource;
+  0.2.1 adds the incremental CONIKS tree-hash cache (O(1) amortized root,
+  ~O(depth) lookup) with byte-identical proofs. No frozen format, KAT vector, or
+  existing verification output changes.
+
 ## [0.1.7]
 
 Adds a **context-parameterized key-history entry hash**, so any application can

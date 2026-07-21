@@ -4,6 +4,24 @@ All notable changes to `metamorphic_log` are documented here. The format is
 based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.9]
+
+Consumes `metamorphic-log` 0.3.0 (and `metamorphic-crypto` 0.10.7), which add
+**C2SP `tlog-cosignature` v1 witness cosignature** verification in both the
+classical Ed25519 (`0x04`) and post-quantum ML-DSA-44 (`0x06`) flavors. No new
+NIF functions are needed: `MetamorphicLog.Note.verify/2` and
+`MetamorphicLog.Checkpoint.verify/2` now accept independent witness cosignature
+lines when given the witness's verifier key, so a checkpoint note can prove it
+was co-signed by the log **and** one or more independent witnesses (split-view
+protection). Purely additive; existing verification behavior and all vectors are
+unchanged.
+
+### Changed
+
+- Bump native crate deps to `metamorphic-log = "0.3.0"` and
+  `metamorphic-crypto = "0.10.7"` (single crypto-core version across the stack).
+- `MetamorphicLog.Note` moduledoc documents the new witness cosignature types.
+
 ## [0.1.8]
 
 Adds the **server-side CONIKS directory construction** surface (the operator /

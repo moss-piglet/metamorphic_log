@@ -4,13 +4,19 @@ defmodule MetamorphicLog.Note do
 
   A signed note is a UTF-8 text body followed by one or more signature lines, as
   defined by the [C2SP signed-note](https://github.com/C2SP/C2SP/blob/main/signed-note.md)
-  spec. This engine supports two signature types:
+  spec. This engine supports these signature types:
 
     * **Ed25519** — the classical C2SP signature type.
     * **Metamorphic hybrid** — an additive composite (`ML-DSA` + `Ed25519`,
       strict-AND verify) that wedges post-quantum integrity into the same note
       format. ML-DSA signing is hedged/randomized, so signature *bytes* are not
       reproducible, but verification is fully deterministic.
+    * **Witness cosignatures** ([C2SP `tlog-cosignature`](https://c2sp.org/tlog-cosignature)
+      v1) — independent witness co-signatures on a checkpoint, in both the
+      classical Ed25519 (`0x04`) and post-quantum ML-DSA-44 (`0x06`) flavors.
+      Passing a witness's verifier key to `verify/2` counts its cosignature, so
+      a checkpoint note can prove it was co-signed by the log **and** one or more
+      independent witnesses (split-view protection).
 
   `verify/2` takes the note text and a list of **trusted verifier keys** (the
   C2SP `name+hash+base64key` encoding). Unknown-key signatures are ignored; a

@@ -4,6 +4,40 @@ All notable changes to `metamorphic_log` are documented here. The format is
 based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.10]
+
+Consumes `metamorphic-log` 0.4.0 and surfaces the **dual-line checkpoint
+signer** and the **witness cosignature signing family** — the producer
+counterparts to the verification paths added in 0.1.9. Purely additive; all
+existing functions and vectors are unchanged.
+
+### Added
+
+- `MetamorphicLog.Checkpoint.sign_dual/5` — sign a checkpoint with ONE
+  `:hybrid`-suite composite secret key, producing two log signature lines under
+  the same key name: the additive hybrid post-quantum line plus a classical
+  Ed25519 (`0x01`) line. The dual note lets stock Ed25519-only C2SP witness
+  software (omniwitness, armored-witness, sigsum) verify and cosign the
+  checkpoint while PQ-aware verifiers keep checking the hybrid line;
+  `signed-note` is multi-signature with unknown-key-ignored, so it stays
+  backward compatible with single-line consumers in both directions.
+- `MetamorphicLog.VerifierKey.encode_ed25519_from_hybrid/2` — derive the
+  Ed25519 (`0x01`) verifier key from a composite public key. The witness
+  registration bundle for an origin is its hybrid vkey plus this derived vkey.
+- `MetamorphicLog.Note.sign_cosignature_ed25519/4` — produce a C2SP
+  `tlog-cosignature` v1 Ed25519 (`0x04`) cosignature line (timestamped, what
+  deployed witnesses emit today) from a raw Ed25519 seed.
+- `MetamorphicLog.Note.sign_cosignature_mldsa44/4` — produce a C2SP
+  `tlog-cosignature` v1 ML-DSA-44 (`0x06`) cosignature line (the spec's
+  recommended post-quantum type) from a raw ML-DSA-44 seed.
+- `MetamorphicLog.VerifierKey.encode_cosignature_ed25519/2` and
+  `encode_cosignature_mldsa44/2` — the matching witness verifier-key encoders.
+
+### Changed
+
+- Bump the native crate dep to `metamorphic-log = "0.4.0"` (dual-line signing
+  and `Signature::marshal_line`).
+
 ## [0.1.9]
 
 Consumes `metamorphic-log` 0.3.0 (and `metamorphic-crypto` 0.10.7), which add

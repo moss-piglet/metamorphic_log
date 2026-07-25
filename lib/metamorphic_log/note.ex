@@ -95,4 +95,69 @@ defmodule MetamorphicLog.Note do
       when is_binary(text) and is_binary(name) and is_binary(seed_b64) do
     Native.nif_note_sign_ed25519(text, name, seed_b64)
   end
+
+  @doc """
+  Produce a C2SP `tlog-cosignature` v1 **Ed25519** (`0x04`) cosignature line
+  over `note_text` at `timestamp` (POSIX seconds), from a raw 32-byte Ed25519
+  seed (base64).
+
+  This is what a witness emits after verifying a log's consistency: a
+  timestamped Ed25519 signature over the domain-separated `cosignature/v1`
+  message (header + `time <timestamp>` line + the whole cosigned note body).
+  `note_text` must be the exact cosigned note body (the checkpoint text,
+  ending in a newline, no signature block); `name` is the cosigner name (a
+  schema-less URL identifying the witness).
+
+  Returns `{:ok, line}` — a single `— <name> <base64>` signature line with NO
+  trailing newline — or `{:error, reason}`. Newline-terminate and concatenate
+  lines to build a cosignature block; verify with the matching
+  `VerifierKey.encode_cosignature_ed25519/2` key.
+
+  ## Example
+
+      {:ok, line} =
+        MetamorphicLog.Note.sign_cosignature_ed25519(body, "witness.example.com", seed, ts)
+
+      cosig_lines = line <> "\\n"
+
+  """
+  @spec sign_cosignature_ed25519(
+          note_text :: String.t(),
+          name :: String.t(),
+          seed_b64 :: String.t(),
+          timestamp :: non_neg_integer()
+        ) :: {:ok, String.t()} | {:error, String.t()}
+  def sign_cosignature_ed25519(note_text, name, seed_b64, timestamp)
+      when is_binary(note_text) and is_binary(name) and is_binary(seed_b64) and
+             is_integer(timestamp) and timestamp >= 0 do
+    Native.nif_note_sign_cosignature_ed25519(note_text, name, seed_b64, timestamp)
+  end
+
+  @doc """
+  Produce a C2SP `tlog-cosignature` v1 **ML-DSA-44** (`0x06`) cosignature line
+  over the checkpoint in `note_text` at `timestamp` (POSIX seconds), from a
+  raw 32-byte ML-DSA-44 seed (base64).
+
+  The post-quantum sibling of `sign_cosignature_ed25519/4`: an ML-DSA-44
+  signature over the spec's `cosigned_message` struct (label `subtree/v1\\n\\0`,
+  cosigner name, timestamp, log origin, subtree bounds `0..size`, root hash),
+  which — unlike the Ed25519 type — commits to the cosigner name. `note_text`
+  must parse as a checkpoint (its first three lines are origin/size/root).
+  ML-DSA signing is hedged, so signature bytes are not reproducible, but
+  verification is deterministic.
+
+  Returns `{:ok, line}` (no trailing newline) or `{:error, reason}`. Verify
+  with the matching `VerifierKey.encode_cosignature_mldsa44/2` key.
+  """
+  @spec sign_cosignature_mldsa44(
+          note_text :: String.t(),
+          name :: String.t(),
+          seed_b64 :: String.t(),
+          timestamp :: non_neg_integer()
+        ) :: {:ok, String.t()} | {:error, String.t()}
+  def sign_cosignature_mldsa44(note_text, name, seed_b64, timestamp)
+      when is_binary(note_text) and is_binary(name) and is_binary(seed_b64) and
+             is_integer(timestamp) and timestamp >= 0 do
+    Native.nif_note_sign_cosignature_mldsa44(note_text, name, seed_b64, timestamp)
+  end
 end

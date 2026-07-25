@@ -447,6 +447,45 @@ fn nif_vkey_encode_ed25519<'a>(env: Env<'a>, name: &str, public_key_b64: &str) -
     }
 }
 
+#[rustler::nif]
+fn nif_vkey_encode_ed25519_from_hybrid<'a>(
+    env: Env<'a>,
+    name: &str,
+    public_key_b64: &str,
+) -> Term<'a> {
+    let public_key = decode!(env, public_key_b64);
+    match VerifierKey::new_ed25519_from_hybrid(name, &public_key) {
+        Ok(vkey) => ok_val(env, vkey.encode()),
+        Err(e) => err(env, e),
+    }
+}
+
+#[rustler::nif]
+fn nif_vkey_encode_cosignature_ed25519<'a>(
+    env: Env<'a>,
+    name: &str,
+    public_key_b64: &str,
+) -> Term<'a> {
+    let public_key = decode!(env, public_key_b64);
+    match VerifierKey::new_cosignature_ed25519(name, &public_key) {
+        Ok(vkey) => ok_val(env, vkey.encode()),
+        Err(e) => err(env, e),
+    }
+}
+
+#[rustler::nif]
+fn nif_vkey_encode_cosignature_mldsa44<'a>(
+    env: Env<'a>,
+    name: &str,
+    public_key_b64: &str,
+) -> Term<'a> {
+    let public_key = decode!(env, public_key_b64);
+    match VerifierKey::new_cosignature_mldsa44(name, &public_key) {
+        Ok(vkey) => ok_val(env, vkey.encode()),
+        Err(e) => err(env, e),
+    }
+}
+
 #[rustler::nif(schedule = "DirtyCpu")]
 fn nif_note_sign_hybrid<'a>(
     env: Env<'a>,
@@ -495,6 +534,66 @@ fn nif_checkpoint_sign_hybrid<'a>(
     });
     match signed {
         Ok(note_text) => ok_val(env, note_text),
+        Err(e) => err(env, e),
+    }
+}
+
+#[rustler::nif(schedule = "DirtyCpu")]
+fn nif_checkpoint_sign_dual<'a>(
+    env: Env<'a>,
+    origin: &str,
+    size: u64,
+    root_b64: &str,
+    name: &str,
+    secret_key_b64: &str,
+) -> Term<'a> {
+    // ML-DSA path: run on a large-stack thread (see `on_signing_stack`).
+    let signed = on_signing_stack(|| {
+        checkpoint::sign_checkpoint_dual(origin, size, root_b64, name, secret_key_b64)
+            .map_err(|e| e.to_string())
+    });
+    match signed {
+        Ok(note_text) => ok_val(env, note_text),
+        Err(e) => err(env, e),
+    }
+}
+
+// Cosignature signers return the single `— name <base64>` signature line a
+// witness appends to (or returns for) a checkpoint note — NOT a full note. The
+// caller newline-terminates and concatenates lines as needed.
+
+#[rustler::nif(schedule = "DirtyCpu")]
+fn nif_note_sign_cosignature_ed25519<'a>(
+    env: Env<'a>,
+    note_text: &str,
+    name: &str,
+    seed_b64: &str,
+    timestamp: u64,
+) -> Term<'a> {
+    let seed = decode!(env, seed_b64);
+    match note::sign_cosignature_ed25519(note_text, name, &seed, timestamp) {
+        Ok(sig) => ok_val(env, sig.marshal_line()),
+        Err(e) => err(env, e),
+    }
+}
+
+#[rustler::nif(schedule = "DirtyCpu")]
+fn nif_note_sign_cosignature_mldsa44<'a>(
+    env: Env<'a>,
+    note_text: &str,
+    name: &str,
+    seed_b64: &str,
+    timestamp: u64,
+) -> Term<'a> {
+    let seed = decode!(env, seed_b64);
+    // ML-DSA path: run on a large-stack thread (see `on_signing_stack`).
+    let signed = on_signing_stack(|| {
+        note::sign_cosignature_mldsa44(note_text, name, &seed, timestamp)
+            .map(|sig| sig.marshal_line())
+            .map_err(|e| e.to_string())
+    });
+    match signed {
+        Ok(line) => ok_val(env, line),
         Err(e) => err(env, e),
     }
 }

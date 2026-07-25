@@ -1,6 +1,6 @@
 [package]
 name = "metamorphic_log_nif"
-version = "0.1.9"
+version = "0.1.10"
 edition = "2024"
 rust-version = "1.91"
 publish = false
@@ -20,7 +20,10 @@ rustler = "0.38"
 # 0.3.0 adds C2SP tlog-cosignature v1 witness cosignature verification (Ed25519
 # 0x04 + post-quantum ML-DSA-44 0x06), so `nif_verify_signed_note` /
 # `nif_checkpoint_verify` accept witness cosignature lines against witness vkeys.
-metamorphic-log = "0.3.0"
+# 0.4.0 adds dual-line checkpoint signing (`sign_checkpoint_dual`), the derived
+# Ed25519 `0x01` vkey (`VerifierKey::new_ed25519_from_hybrid`), and
+# `Signature::marshal_line` behind the cosignature signers.
+metamorphic-log = "0.4.0"
 # Single source of truth for base64 (same impl used by the engine + WASM SDK),
 # so the wire encoding is byte-identical across Rust core / WASM / this NIF.
 # 0.10.7 adds the raw ML-DSA-44 interop primitives that metamorphic-log 0.3.0's

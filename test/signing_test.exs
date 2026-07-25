@@ -90,6 +90,229 @@ defmodule MetamorphicLog.SigningTest do
     end
   end
 
+  describe "dual-line checkpoint round-trip" do
+    setup do
+      %{public_key: pk_b64, secret_key: sk_b64} =
+        MetamorphicCrypto.Sign.generate_signing_keypair()
+
+      {:ok, hybrid_vkey} = VerifierKey.encode_hybrid(@name, pk_b64)
+      {:ok, ed25519_vkey} = VerifierKey.encode_ed25519_from_hybrid(@name, pk_b64)
+
+      size = 42
+      root_b64 = Base.encode64(:crypto.strong_rand_bytes(32))
+      {:ok, note} = Checkpoint.sign_dual(@origin, size, root_b64, @name, sk_b64)
+
+      %{
+        sk: sk_b64,
+        pk: pk_b64,
+        hybrid_vkey: hybrid_vkey,
+        ed25519_vkey: ed25519_vkey,
+        note: note,
+        size: size,
+        root_b64: root_b64
+      }
+    end
+
+    test "each line verifies independently against its own vkey",
+         %{hybrid_vkey: hybrid_vkey, ed25519_vkey: ed25519_vkey, note: note} do
+      # A PQ-aware verifier accepts the hybrid line (ignoring the 0x01 line);
+      # a stock Ed25519-only witness accepts the 0x01 line (ignoring the
+      # hybrid line); both together verify both lines.
+      assert {:ok, 1} = Note.verify(note, [hybrid_vkey])
+      assert {:ok, 1} = Note.verify(note, [ed25519_vkey])
+      assert {:ok, 2} = Note.verify(note, [hybrid_vkey, ed25519_vkey])
+    end
+
+    test "the two lines share the key name but carry distinct key ids",
+         %{hybrid_vkey: hybrid_vkey, ed25519_vkey: ed25519_vkey, note: note} do
+      [_body, sig_block] = String.split(note, "\n\n", parts: 2)
+      lines = String.split(sig_block, "\n", trim: true)
+      assert length(lines) == 2
+
+      key_ids =
+        for line <- lines do
+          assert String.starts_with?(line, "— #{@name} ")
+          ["—", _name, blob] = String.split(line, " ", parts: 3)
+          <<key_id::32-big, _sig::binary>> = Base.decode64!(blob)
+          key_id
+        end
+
+      assert Enum.uniq(key_ids) == key_ids
+
+      # ...and each key id is the one embedded in the matching vkey.
+      assert [hybrid_id, ed25519_id] = key_ids
+      assert vkey_key_id(hybrid_vkey) == hybrid_id
+      assert vkey_key_id(ed25519_vkey) == ed25519_id
+    end
+
+    test "the derived 0x01 vkey is deterministic", %{pk: pk_b64, ed25519_vkey: ed25519_vkey} do
+      assert {:ok, ^ed25519_vkey} = VerifierKey.encode_ed25519_from_hybrid(@name, pk_b64)
+    end
+
+    test "a tampered checkpoint body is rejected by both verifier classes",
+         %{hybrid_vkey: hybrid_vkey, ed25519_vkey: ed25519_vkey, note: note} do
+      tampered = String.replace(note, "\n42\n", "\n43\n", global: false)
+      refute tampered == note
+      assert {:error, _reason} = Note.verify(tampered, [hybrid_vkey])
+      assert {:error, _reason} = Note.verify(tampered, [ed25519_vkey])
+    end
+
+    test "the checkpoint parses back out of the dual note",
+         %{ed25519_vkey: ed25519_vkey, note: note, size: size, root_b64: root_b64} do
+      assert {:ok, %Checkpoint{origin: @origin, size: ^size, root: ^root_b64}} =
+               Checkpoint.verify(note, [ed25519_vkey])
+    end
+
+    test "suites without an Ed25519 classical half are rejected" do
+      for suite <- [:hybrid_matched, :pure_cnsa2] do
+        {:ok, kp} = MetamorphicCrypto.Sign.generate_signing_keypair_suite(suite, :cat5)
+        root_b64 = Base.encode64(:crypto.strong_rand_bytes(32))
+
+        assert {:error, _reason} =
+                 Checkpoint.sign_dual(@origin, 1, root_b64, @name, kp.secret_key)
+
+        assert {:error, _reason} = VerifierKey.encode_ed25519_from_hybrid(@name, kp.public_key)
+      end
+    end
+  end
+
+  describe "witness cosignature round-trip (0x04 Ed25519)" do
+    setup do
+      # The log dual-signs its checkpoint; the witness then cosigns the SAME
+      # body (everything before the signature block, plus one trailing
+      # newline).
+      %{public_key: log_pk, secret_key: log_sk} =
+        MetamorphicCrypto.Sign.generate_signing_keypair()
+
+      {:ok, log_vkey} = VerifierKey.encode_hybrid(@name, log_pk)
+      {:ok, log_ed25519_vkey} = VerifierKey.encode_ed25519_from_hybrid(@name, log_pk)
+      root_b64 = Base.encode64(:crypto.strong_rand_bytes(32))
+      {:ok, note} = Checkpoint.sign_dual(@origin, 42, root_b64, @name, log_sk)
+      [body, _sig_block] = String.split(note, "\n\n", parts: 2)
+      body = body <> "\n"
+
+      # The witness's classical cosignature key (OTP eddsa derives the pubkey).
+      witness = "witness.example.com/cosigner"
+      seed = :crypto.strong_rand_bytes(32)
+      {witness_pk, ^seed} = :crypto.generate_key(:eddsa, :ed25519, seed)
+
+      {:ok, witness_vkey} =
+        VerifierKey.encode_cosignature_ed25519(witness, Base.encode64(witness_pk))
+
+      timestamp = System.system_time(:second)
+      {:ok, line} = Note.sign_cosignature_ed25519(body, witness, Base.encode64(seed), timestamp)
+      merged = note <> line <> "\n"
+
+      %{
+        log_vkey: log_vkey,
+        log_ed25519_vkey: log_ed25519_vkey,
+        witness_vkey: witness_vkey,
+        note: note,
+        merged: merged,
+        cosig_line: line,
+        witness: witness
+      }
+    end
+
+    test "the merged note verifies for the log and the witness", %{
+      log_vkey: log_vkey,
+      log_ed25519_vkey: log_ed25519_vkey,
+      witness_vkey: witness_vkey,
+      merged: merged
+    } do
+      assert {:ok, 1} = Note.verify(merged, [witness_vkey])
+      assert {:ok, 1} = Note.verify(merged, [log_vkey])
+      # The witness vkey trusts no log line and the log hybrid vkey trusts no
+      # cosignature, so each pair counts exactly its own lines.
+      assert {:ok, 2} = Note.verify(merged, [log_vkey, witness_vkey])
+      assert {:ok, 3} = Note.verify(merged, [log_vkey, log_ed25519_vkey, witness_vkey])
+    end
+
+    test "the cosignature line carries the witness vkey's key id", %{
+      witness_vkey: witness_vkey,
+      cosig_line: line,
+      witness: witness
+    } do
+      assert String.starts_with?(line, "— #{witness} ")
+      ["—", _name, blob] = String.split(line, " ", parts: 3)
+      <<key_id::32-big, _sig::binary>> = Base.decode64!(blob)
+      assert key_id == vkey_key_id(witness_vkey)
+    end
+
+    test "a tampered body rejects the cosignature", %{witness_vkey: witness_vkey, merged: merged} do
+      tampered = String.replace(merged, "\n42\n", "\n43\n", global: false)
+      assert {:error, _reason} = Note.verify(tampered, [witness_vkey])
+    end
+  end
+
+  describe "witness cosignature round-trip (0x06 ML-DSA-44)" do
+    setup do
+      %{public_key: log_pk, secret_key: log_sk} =
+        MetamorphicCrypto.Sign.generate_signing_keypair()
+
+      {:ok, log_vkey} = VerifierKey.encode_hybrid(@name, log_pk)
+      {:ok, log_ed25519_vkey} = VerifierKey.encode_ed25519_from_hybrid(@name, log_pk)
+      root_b64 = Base.encode64(:crypto.strong_rand_bytes(32))
+      {:ok, note} = Checkpoint.sign_dual(@origin, 42, root_b64, @name, log_sk)
+      [body, _sig_block] = String.split(note, "\n\n", parts: 2)
+      body = body <> "\n"
+
+      # A Cat-2 hybrid keypair's ML-DSA half IS a raw ML-DSA-44 keypair:
+      # secret `tag || ed25519_seed(32) || ml_dsa_seed(32)`, public
+      # `tag || ed25519_pk(32) || ml_dsa_pk(1312)`. Extract both halves for the
+      # witness's PQ cosignature key.
+      {:ok, kp} = MetamorphicCrypto.Sign.generate_signing_keypair_suite(:hybrid, :cat2)
+      sk_bytes = Base.decode64!(kp.secret_key)
+      pk_bytes = Base.decode64!(kp.public_key)
+      ml_seed = binary_part(sk_bytes, 33, 32)
+      ml_pk = binary_part(pk_bytes, 33, 1312)
+
+      witness = "witness.example.com/pq-cosigner"
+      {:ok, witness_vkey} = VerifierKey.encode_cosignature_mldsa44(witness, Base.encode64(ml_pk))
+
+      timestamp = System.system_time(:second)
+
+      {:ok, line} =
+        Note.sign_cosignature_mldsa44(body, witness, Base.encode64(ml_seed), timestamp)
+
+      merged = note <> line <> "\n"
+
+      %{
+        log_vkey: log_vkey,
+        log_ed25519_vkey: log_ed25519_vkey,
+        witness_vkey: witness_vkey,
+        merged: merged,
+        cosig_line: line
+      }
+    end
+
+    test "the merged note verifies for the log and the PQ witness", %{
+      log_vkey: log_vkey,
+      log_ed25519_vkey: log_ed25519_vkey,
+      witness_vkey: witness_vkey,
+      merged: merged
+    } do
+      assert {:ok, 1} = Note.verify(merged, [witness_vkey])
+      assert {:ok, 2} = Note.verify(merged, [log_vkey, witness_vkey])
+      assert {:ok, 3} = Note.verify(merged, [log_vkey, log_ed25519_vkey, witness_vkey])
+    end
+
+    test "a tampered body rejects the PQ cosignature", %{
+      witness_vkey: witness_vkey,
+      merged: merged
+    } do
+      tampered = String.replace(merged, "\n42\n", "\n43\n", global: false)
+      assert {:error, _reason} = Note.verify(tampered, [witness_vkey])
+    end
+  end
+
+  # `<name>+<hex key id>+<base64(type || key)>` — the middle segment.
+  defp vkey_key_id(vkey) do
+    [_name, hex_id, _key] = String.split(vkey, "+", parts: 3)
+    <<key_id::32-big>> = Base.decode16!(hex_id, case: :lower)
+    key_id
+  end
+
   describe "policy round-trip" do
     test "a signed CONIKS policy verifies and reports the declared posture" do
       %{public_key: pk_b64, secret_key: sk_b64} =

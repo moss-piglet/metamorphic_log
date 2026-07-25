@@ -88,10 +88,29 @@ defmodule MetamorphicLog.Native do
   # Signing / encoding (producer helpers)
   def nif_vkey_encode_hybrid(_name, _public_key_b64), do: :erlang.nif_error(:nif_not_loaded)
   def nif_vkey_encode_ed25519(_name, _public_key_b64), do: :erlang.nif_error(:nif_not_loaded)
+
+  def nif_vkey_encode_ed25519_from_hybrid(_name, _public_key_b64),
+    do: :erlang.nif_error(:nif_not_loaded)
+
+  def nif_vkey_encode_cosignature_ed25519(_name, _public_key_b64),
+    do: :erlang.nif_error(:nif_not_loaded)
+
+  def nif_vkey_encode_cosignature_mldsa44(_name, _public_key_b64),
+    do: :erlang.nif_error(:nif_not_loaded)
+
   def nif_note_sign_hybrid(_text, _name, _secret_key_b64), do: :erlang.nif_error(:nif_not_loaded)
   def nif_note_sign_ed25519(_text, _name, _seed_b64), do: :erlang.nif_error(:nif_not_loaded)
 
+  def nif_note_sign_cosignature_ed25519(_note_text, _name, _seed_b64, _timestamp),
+    do: :erlang.nif_error(:nif_not_loaded)
+
+  def nif_note_sign_cosignature_mldsa44(_note_text, _name, _seed_b64, _timestamp),
+    do: :erlang.nif_error(:nif_not_loaded)
+
   def nif_checkpoint_sign_hybrid(_origin, _size, _root_b64, _name, _secret_key_b64),
+    do: :erlang.nif_error(:nif_not_loaded)
+
+  def nif_checkpoint_sign_dual(_origin, _size, _root_b64, _name, _secret_key_b64),
     do: :erlang.nif_error(:nif_not_loaded)
 
   # CONIKS

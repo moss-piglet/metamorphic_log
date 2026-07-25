@@ -133,6 +133,46 @@ defmodule MetamorphicLog.Checkpoint do
     Native.nif_checkpoint_sign_hybrid(origin, size, root_b64, name, secret_key_b64)
   end
 
+  @doc """
+  Build a checkpoint body and sign it **twice** with ONE hybrid PQ composite
+  secret key — the additive hybrid line plus a classical Ed25519 (`0x01`) line,
+  both under the same key `name` — returning the complete dual-line C2SP
+  signed-note text ready to publish.
+
+  This is the witness-interop producer path: stock C2SP witness software
+  (omniwitness, armored-witness, sigsum) verifies Ed25519 `0x01` log lines
+  only, while PQ-aware verifiers trust the hybrid line. `signed-note` is
+  multi-signature with unknown-key-ignored, so the one note serves both worlds
+  and stays backward compatible with single-line consumers in both directions.
+
+  Arguments and validation match `sign_hybrid/5`. The matching verifier keys
+  are `VerifierKey.encode_hybrid/2` (hybrid line) and
+  `VerifierKey.encode_ed25519_from_hybrid/2` (Ed25519 line), both derived from
+  the same composite public key. Requires a `:hybrid`-suite composite key
+  (Ed25519 classical half); matched-suite (Ed448/P-521) and pure-PQ keys are
+  rejected.
+
+  Returns `{:ok, note_text}` or `{:error, reason}`.
+
+  ## Example
+
+      {:ok, note} =
+        MetamorphicLog.Checkpoint.sign_dual("origin/log", 10, root_b64, "origin/log", sk)
+
+  """
+  @spec sign_dual(
+          origin :: String.t(),
+          size :: non_neg_integer(),
+          root_b64 :: String.t(),
+          name :: String.t(),
+          secret_key_b64 :: String.t()
+        ) :: {:ok, String.t()} | {:error, String.t()}
+  def sign_dual(origin, size, root_b64, name, secret_key_b64)
+      when is_binary(origin) and is_integer(size) and size >= 0 and is_binary(root_b64) and
+             is_binary(name) and is_binary(secret_key_b64) do
+    Native.nif_checkpoint_sign_dual(origin, size, root_b64, name, secret_key_b64)
+  end
+
   # ─── Internal ────────────────────────────────────────────────────────────
 
   defp to_struct({:ok, {origin, size, root, extensions}}) do

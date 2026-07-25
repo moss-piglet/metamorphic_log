@@ -127,7 +127,7 @@ defmodule MetamorphicLog.SigningTest do
          %{hybrid_vkey: hybrid_vkey, ed25519_vkey: ed25519_vkey, note: note} do
       [_body, sig_block] = String.split(note, "\n\n", parts: 2)
       lines = String.split(sig_block, "\n", trim: true)
-      assert length(lines) == 2
+      assert [_, _] = lines
 
       key_ids =
         for line <- lines do

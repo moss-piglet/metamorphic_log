@@ -1,6 +1,6 @@
 [package]
 name = "metamorphic_log_nif"
-version = "0.1.10"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.91"
 publish = false
@@ -23,19 +23,28 @@ rustler = "0.38"
 # 0.4.0 adds dual-line checkpoint signing (`sign_checkpoint_dual`), the derived
 # Ed25519 `0x01` vkey (`VerifierKey::new_ed25519_from_hybrid`), and
 # `Signature::marshal_line` behind the cosignature signers.
-metamorphic-log = "0.4.0"
+# 0.5.0 adds RFC 9497 POPRF-backed CONIKS index derivation (the `poprf` module,
+# `ConiksDirectory::poprf` / `lookup_by_index` / `blind_evaluate`, the
+# `IndexedLookupProof` (0x03) / `IndexedAbsenceProof` (0x02) wire types, and
+# `verify_indexed_lookup` / `verify_indexed_absence`) behind the oblivious
+# lookup NIFs.
+metamorphic-log = "0.5.0"
 # Single source of truth for base64 (same impl used by the engine + WASM SDK),
 # so the wire encoding is byte-identical across Rust core / WASM / this NIF.
 # 0.10.7 adds the raw ML-DSA-44 interop primitives that metamorphic-log 0.3.0's
 # 0x06 cosignature path depends on (keeps a single crypto core version).
-metamorphic-crypto = "0.10.7"
+# 0.11.0 adds the RFC 9497 POPRF primitives that metamorphic-log 0.5.0's
+# oblivious index derivation depends on.
+metamorphic-crypto = "0.11.0"
 
 # --- Local co-development override (commented out by default) ---
 # Uncomment to build against the unreleased sibling metamorphic-log working tree
 # instead of the published crate. Leave commented in committed code so CI, the
 # release pipeline, and downstream consumers resolve the published version from
-# crates.io.
+# crates.io. (When active, BOTH patches are required: a patch only takes effect
+# from the root manifest, and metamorphic-log's own patch does not propagate.)
 #
 # [patch.crates-io]
 # metamorphic-log = { path = "../../../metamorphic-log" }
+# metamorphic-crypto = { path = "../../../metamorphic-crypto" }
 

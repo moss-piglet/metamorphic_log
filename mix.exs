@@ -1,7 +1,7 @@
 defmodule MetamorphicLog.MixProject do
   use Mix.Project
 
-  @version "0.1.10"
+  @version "0.2.0"
   @repo_url "https://github.com/moss-piglet/metamorphic_log"
 
   def project do
@@ -36,7 +36,7 @@ defmodule MetamorphicLog.MixProject do
     [
       {:rustler, "~> 0.38.0", runtime: false},
       {:rustler_precompiled, "~> 0.8"},
-      {:metamorphic_crypto, "~> 0.8.2", only: :test},
+      {:metamorphic_crypto, "~> 0.9", only: :test},
       {:ex_doc, "~> 0.34", only: :dev, runtime: false}
     ]
   end

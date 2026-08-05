@@ -4,6 +4,39 @@ All notable changes to `metamorphic_log` are documented here. The format is
 based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0]
+
+Consumes `metamorphic-log` 0.5.0 and surfaces **oblivious CONIKS index
+derivation** (RFC 9497 POPRF, OPRF(ristretto255, SHA-512), modePOPRF) — the
+query-time privacy upgrade over the classical VRF directory. The server
+evaluates a blinded element (learning nothing about the cleartext label) and
+returns a DLEQ proof; the client unblinds and verifies to the **same
+deterministic index** the server derives non-obliviously at tree-construction
+time. The namespace is bound through the POPRF's public `info` metadata, not
+the input. Purely additive on the Elixir surface; all existing functions and
+vectors are unchanged.
+
+### Added
+
+- `MetamorphicLog.Coniks.derive_poprf_key_pair/2` — derive a deterministic
+  deployment POPRF evaluation key from a 32-byte seed + public `key_info`
+  (RFC 9497 §3.2.1 `DeriveKeyPair`).
+- `MetamorphicLog.Coniks.directory_open_poprf/3` — open a POPRF-backed
+  directory bound to namespace-separating public `info` metadata.
+- `MetamorphicLog.Coniks.lookup_by_index/2` — by-index lookup on an open
+  directory (either derivation scheme), returning the new indexed proof wire
+  types.
+- `MetamorphicLog.Coniks.blind_evaluate/2` — server-side blinded evaluation +
+  DLEQ proof (POPRF-backed directories only); cleartext identity lookups are
+  refused on such directories by design.
+- `MetamorphicLog.Coniks.poprf_public/1`, `poprf_info/1`, `suite_id/1` —
+  directory introspection (`0x80` suite discriminator for POPRF; the RFC 9381
+  suite octet for VRF).
+- `MetamorphicLog.Coniks.verify_indexed_lookup/5` /
+  `verify_indexed_absence/5` — verify the new `IndexedLookupProof` (`0x03`) /
+  `IndexedAbsenceProof` (`0x02`) wire types against a directory root, with no
+  VRF/POPRF keys required.
+
 ## [0.1.10]
 
 Consumes `metamorphic-log` 0.4.0 and surfaces the **dual-line checkpoint

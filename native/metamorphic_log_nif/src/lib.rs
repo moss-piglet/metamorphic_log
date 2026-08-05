@@ -38,7 +38,10 @@ use metamorphic_log::{
     anchor::{self, AnchorCommitment, AnchorLink, AnchorRecord, Medium},
     checkpoint::{self, Checkpoint},
     commitment::{self, Commitment, Opening},
-    coniks::{self, AbsenceProof, ConiksDirectory, LookupProof, LookupResult, Namespace},
+    coniks::{
+        self, AbsenceProof, ConiksDirectory, IndexedAbsenceProof, IndexedLookupProof,
+        IndexedLookupResult, LookupProof, LookupResult, Namespace,
+    },
     directory::{DirectoryBackendId, SearchOutcome},
     ingest::{self, DedupKey},
     keytrans::{KeytransDirectory, KeytransVerifier, KtSuite},
@@ -48,6 +51,7 @@ use metamorphic_log::{
         CheckpointSuite, CommitmentHash, DirectoryMode, KeytransSuite, NamespacePolicy,
         SecurityLevel, SignedPolicy, VrfMode,
     },
+    poprf,
     tile::{self, Tile},
     verify_consistency, verify_inclusion,
     vrf::{Ecvrf, Vrf, VrfPublicKey, VrfSecretKey},
@@ -778,14 +782,233 @@ fn nif_coniks_directory_lookup<'a>(
 }
 
 /// The VRF public key relying parties use to verify this directory's proofs.
-/// Takes the read lock. Returns `{:ok, vrf_public_b64}`.
+/// Takes the read lock. Returns `{:ok, vrf_public_b64}`, or `{:error, _}` on a
+/// POPRF-backed directory (use `nif_coniks_directory_poprf_public` there).
 #[rustler::nif(schedule = "DirtyCpu")]
 fn nif_coniks_directory_vrf_public<'a>(env: Env<'a>, dir: ResourceArc<ConiksDir>) -> Term<'a> {
     let guard = match dir.inner.read() {
         Ok(g) => g,
         Err(_) => return err(env, "coniks directory lock poisoned"),
     };
-    ok_val(env, b64::encode(guard.vrf_public_key().as_bytes()))
+    match guard.vrf_public_key() {
+        Some(public) => ok_val(env, b64::encode(public.as_bytes())),
+        None => err(env, "not a VRF-backed directory"),
+    }
+}
+
+// ─── CONIKS POPRF (RFC 9497) oblivious index derivation ──────────────────────
+//
+// The POPRF-backed directory personality: same tree, same proofs, but the
+// query-time cleartext-label exposure is gone — the server only ever sees a
+// blinded element (an online, rate-limited evaluation) or an already-derived
+// 32-byte index. The deployment evaluation key is derived from a managed
+// secret via RFC 9497 §3.2.1 (`nif_poprf_derive_key_pair`); the per-namespace
+// binding is the public `info` string threaded through open/evaluate.
+
+/// Derive the deployment POPRF keypair from a 32-byte seed and a public key
+/// info string (RFC 9497 §3.2.1 `DeriveKeyPair`). Returns
+/// `{:ok, {secret_b64, public_b64}}`.
+#[rustler::nif(schedule = "DirtyCpu")]
+fn nif_poprf_derive_key_pair<'a>(env: Env<'a>, seed_b64: &str, key_info_b64: &str) -> Term<'a> {
+    let seed = decode!(env, seed_b64);
+    let key_info = decode!(env, key_info_b64);
+    match poprf::derive_key_pair(&seed, &key_info) {
+        Ok((secret, public)) => ok_val(
+            env,
+            (
+                b64::encode(secret.as_bytes()),
+                b64::encode(public.as_bytes()),
+            ),
+        ),
+        Err(e) => err(env, e),
+    }
+}
+
+/// Open a per-namespace POPRF-backed directory, returning it as an opaque
+/// resource. `info` is the public POPRF metadata binding this namespace's
+/// evaluations (e.g. `"mosskeys/directory/v1:<namespace_id>"`). The directory
+/// starts empty; replay entries with `nif_coniks_directory_insert` (index
+/// derivation is the non-oblivious `Evaluate`, matching what clients derive
+/// obliviously). Returns `{:ok, resource}` or `{:error, reason}`.
+#[rustler::nif(schedule = "DirtyCpu")]
+fn nif_coniks_directory_open_poprf<'a>(
+    env: Env<'a>,
+    namespace: &str,
+    info_b64: &str,
+    secret_b64: &str,
+) -> Term<'a> {
+    let ns = match Namespace::parse(namespace) {
+        Ok(n) => n,
+        Err(e) => return err(env, e),
+    };
+    let info = decode!(env, info_b64);
+    let secret = poprf::PoprfSecretKey::from_bytes(decode!(env, secret_b64));
+    match ConiksDirectory::poprf(ns, info, secret) {
+        Ok(dir) => ok_val(
+            env,
+            ResourceArc::new(ConiksDir {
+                inner: RwLock::new(dir),
+            }),
+        ),
+        Err(e) => err(env, e),
+    }
+}
+
+/// Look up a 32-byte derived tree index, returning an index-bound presence or
+/// absence proof against the current root — the POPRF serving path (no
+/// identity, no cleartext label). Takes the read lock. Returns
+/// `{:ok, {:present, value_b64, proof_b64}}` or `{:ok, {:absent, proof_b64}}`.
+#[rustler::nif(schedule = "DirtyCpu")]
+fn nif_coniks_directory_lookup_by_index<'a>(
+    env: Env<'a>,
+    dir: ResourceArc<ConiksDir>,
+    index_b64: &str,
+) -> Term<'a> {
+    let index = decode_array!(env, index_b64, 32, "CONIKS index");
+    let guard = match dir.inner.read() {
+        Ok(g) => g,
+        Err(_) => return err(env, "coniks directory lock poisoned"),
+    };
+    match guard.lookup_by_index(&index) {
+        IndexedLookupResult::Present(proof) => ok_val(
+            env,
+            (
+                atoms::present(),
+                b64::encode(proof.value()),
+                b64::encode(&proof.to_bytes()),
+            ),
+        ),
+        IndexedLookupResult::Absent(proof) => {
+            ok_val(env, (atoms::absent(), b64::encode(&proof.to_bytes())))
+        }
+    }
+}
+
+/// The server-side oblivious evaluation (RFC 9497 `BlindEvaluate`): evaluate a
+/// client's blinded element under this directory's POPRF key, returning
+/// `{:ok, {evaluated_element_b64, dleq_proof_b64}}`. The directory learns
+/// nothing about the identity behind the blinded element. Takes the read lock.
+#[rustler::nif(schedule = "DirtyCpu")]
+fn nif_coniks_directory_blind_evaluate<'a>(
+    env: Env<'a>,
+    dir: ResourceArc<ConiksDir>,
+    blinded_element_b64: &str,
+) -> Term<'a> {
+    let blinded = decode!(env, blinded_element_b64);
+    let guard = match dir.inner.read() {
+        Ok(g) => g,
+        Err(_) => return err(env, "coniks directory lock poisoned"),
+    };
+    match guard.blind_evaluate(&blinded) {
+        Ok((evaluated, proof)) => ok_val(env, (b64::encode(&evaluated), b64::encode(&proof))),
+        Err(e) => err(env, e),
+    }
+}
+
+/// The POPRF public key clients blind under, for a POPRF-backed directory.
+/// Takes the read lock. Returns `{:ok, poprf_public_b64}`, or `{:error, _}` on
+/// a VRF-backed directory.
+#[rustler::nif(schedule = "DirtyCpu")]
+fn nif_coniks_directory_poprf_public<'a>(env: Env<'a>, dir: ResourceArc<ConiksDir>) -> Term<'a> {
+    let guard = match dir.inner.read() {
+        Ok(g) => g,
+        Err(_) => return err(env, "coniks directory lock poisoned"),
+    };
+    match guard.poprf_public_key() {
+        Some(public) => ok_val(env, b64::encode(public.as_bytes())),
+        None => err(env, "not a POPRF-backed directory"),
+    }
+}
+
+/// The public POPRF `info` metadata binding this directory's evaluations, for
+/// a POPRF-backed directory. Takes the read lock. Returns `{:ok, info_b64}`.
+#[rustler::nif(schedule = "DirtyCpu")]
+fn nif_coniks_directory_poprf_info<'a>(env: Env<'a>, dir: ResourceArc<ConiksDir>) -> Term<'a> {
+    let guard = match dir.inner.read() {
+        Ok(g) => g,
+        Err(_) => return err(env, "coniks directory lock poisoned"),
+    };
+    match guard.poprf_info() {
+        Some(info) => ok_val(env, b64::encode(info)),
+        None => err(env, "not a POPRF-backed directory"),
+    }
+}
+
+/// This directory's index-derivation suite identifier (an RFC 9381 octet for a
+/// VRF directory, `0x80` for POPRF), bound into every leaf hash. Clients need
+/// it to verify index-bound proofs. Returns `{:ok, suite_id}`.
+#[rustler::nif(schedule = "DirtyCpu")]
+fn nif_coniks_directory_suite_id<'a>(env: Env<'a>, dir: ResourceArc<ConiksDir>) -> Term<'a> {
+    let guard = match dir.inner.read() {
+        Ok(g) => g,
+        Err(_) => return err(env, "coniks directory lock poisoned"),
+    };
+    ok_val(env, guard.suite_id() as u32)
+}
+
+/// Verify an **index-bound presence** proof (the POPRF oblivious-lookup path):
+/// the caller's self-derived 32-byte `index` + the canonical
+/// `IndexedLookupProof` bytes against `root`. No identity or scheme key is
+/// needed. Returns `{:ok, value_b64}` or `{:error, reason}`.
+#[rustler::nif(schedule = "DirtyCpu")]
+fn nif_coniks_verify_indexed_lookup<'a>(
+    env: Env<'a>,
+    namespace: &str,
+    suite_id: u32,
+    root_b64: &str,
+    index_b64: &str,
+    proof_b64: &str,
+) -> Term<'a> {
+    let ns = match Namespace::parse(namespace) {
+        Ok(n) => n,
+        Err(e) => return err(env, e),
+    };
+    if suite_id > u8::MAX as u32 {
+        return err(env, "suite id must fit in a byte");
+    }
+    let root = decode_array!(env, root_b64, 64, "CONIKS root");
+    let index = decode_array!(env, index_b64, 32, "CONIKS index");
+    let proof_bytes = decode!(env, proof_b64);
+    let proof = match IndexedLookupProof::from_bytes(&proof_bytes) {
+        Ok(p) => p,
+        Err(e) => return err(env, e),
+    };
+    match coniks::verify_indexed_lookup(&ns, suite_id as u8, &root, &index, &proof) {
+        Ok(value) => ok_val(env, b64::encode(&value)),
+        Err(e) => err(env, e),
+    }
+}
+
+/// Verify an **index-bound absence** proof. Same inputs as
+/// `nif_coniks_verify_indexed_lookup` but `proof_b64` is a canonical
+/// `IndexedAbsenceProof`. Returns `:ok` or `{:error, reason}`.
+#[rustler::nif(schedule = "DirtyCpu")]
+fn nif_coniks_verify_indexed_absence<'a>(
+    env: Env<'a>,
+    namespace: &str,
+    suite_id: u32,
+    root_b64: &str,
+    index_b64: &str,
+    proof_b64: &str,
+) -> Term<'a> {
+    let ns = match Namespace::parse(namespace) {
+        Ok(n) => n,
+        Err(e) => return err(env, e),
+    };
+    if suite_id > u8::MAX as u32 {
+        return err(env, "suite id must fit in a byte");
+    }
+    let root = decode_array!(env, root_b64, 64, "CONIKS root");
+    let index = decode_array!(env, index_b64, 32, "CONIKS index");
+    let proof_bytes = decode!(env, proof_b64);
+    let proof = match IndexedAbsenceProof::from_bytes(&proof_bytes) {
+        Ok(p) => p,
+        Err(e) => return err(env, e),
+    };
+    match coniks::verify_indexed_absence(&ns, suite_id as u8, &root, &index, &proof) {
+        Ok(()) => ok(env),
+        Err(e) => err(env, e),
+    }
 }
 
 // ─── Commitments (SHA3-512) ──────────────────────────────────────────────────

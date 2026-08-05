@@ -145,6 +145,41 @@ defmodule MetamorphicLog.Native do
   def nif_coniks_directory_lookup(_dir, _identity_b64), do: :erlang.nif_error(:nif_not_loaded)
   def nif_coniks_directory_vrf_public(_dir), do: :erlang.nif_error(:nif_not_loaded)
 
+  # CONIKS POPRF (RFC 9497) oblivious index derivation
+  def nif_poprf_derive_key_pair(_seed_b64, _key_info_b64),
+    do: :erlang.nif_error(:nif_not_loaded)
+
+  def nif_coniks_directory_open_poprf(_namespace, _info_b64, _poprf_secret_b64),
+    do: :erlang.nif_error(:nif_not_loaded)
+
+  def nif_coniks_directory_lookup_by_index(_dir, _index_b64),
+    do: :erlang.nif_error(:nif_not_loaded)
+
+  def nif_coniks_directory_blind_evaluate(_dir, _blinded_element_b64),
+    do: :erlang.nif_error(:nif_not_loaded)
+
+  def nif_coniks_directory_poprf_public(_dir), do: :erlang.nif_error(:nif_not_loaded)
+  def nif_coniks_directory_poprf_info(_dir), do: :erlang.nif_error(:nif_not_loaded)
+  def nif_coniks_directory_suite_id(_dir), do: :erlang.nif_error(:nif_not_loaded)
+
+  def nif_coniks_verify_indexed_lookup(
+        _namespace,
+        _suite_id,
+        _root_b64,
+        _index_b64,
+        _proof_b64
+      ),
+      do: :erlang.nif_error(:nif_not_loaded)
+
+  def nif_coniks_verify_indexed_absence(
+        _namespace,
+        _suite_id,
+        _root_b64,
+        _index_b64,
+        _proof_b64
+      ),
+      do: :erlang.nif_error(:nif_not_loaded)
+
   # Commitments
   def nif_verify_commitment(_context, _commitment_b64, _value_b64, _opening_b64),
     do: :erlang.nif_error(:nif_not_loaded)
